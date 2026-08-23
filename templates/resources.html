@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Academic Resources | IVY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('feed') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="IVY">
+        </a>
+
+        <nav class="nav-links" id="navLinks">
+            <a href="{{ url_for('feed') }}">Feed</a>
+            <a href="{{ url_for('profile') }}">Profile</a>
+            <a href="{{ url_for('students') }}">Students</a>
+            <a href="{{ url_for('messages') }}">Messages</a>
+            <a href="{{ url_for('notifications') }}">Notifications</a>
+            <a href="{{ url_for('resources') }}" class="active">Resources</a>
+            <a href="{{ url_for('search') }}">Search</a>
+            <a href="{{ url_for('ai_assistant') }}">AI</a>
+            <a href="{{ url_for('logout') }}">Sign Out</a>
+        </nav>
+
+        <div class="topbar-actions">
+            <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+            <button class="menu-button" id="menuButton" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="dashboard-page">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="section-heading">
+            <h1>Course Materials & Resources</h1>
+            <p>Upload and access verified study notes, slide decks, research papers, and curated reference links.</p>
+        </section>
+
+        <form class="dashboard-card resource-form" action="{{ url_for('resources') }}" method="POST" enctype="multipart/form-data">
+            <div class="form-row two-columns">
+                <div>
+                    <label for="title">Document / Resource Title</label>
+                    <input type="text" id="title" name="title" placeholder="e.g. Operating Systems Final Exam Review" required>
+                </div>
+
+                <div>
+                    <label for="resource_type">Resource Format</label>
+                    <select id="resource_type" name="resource_type" required>
+                        <option value="pdf">PDF Document</option>
+                        <option value="ppt">Slide Presentation (PPT/PPTX)</option>
+                        <option value="image">Diagram / Image</option>
+                        <option value="link">External Web Link</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <label for="description">Summary & Key Highlights</label>
+                <textarea id="description" name="description" rows="2" placeholder="Brief outline of the contents and topics covered..."></textarea>
+            </div>
+
+            <div class="form-row two-columns">
+                <div>
+                    <label for="resource_file">Upload File</label>
+                    <input type="file" id="resource_file" name="resource_file" accept=".png,.jpg,.jpeg,.gif,.pdf,.ppt,.pptx">
+                </div>
+
+                <div>
+                    <label for="link_url">External Reference URL (Optional)</label>
+                    <input type="url" id="link_url" name="link_url" placeholder="https://github.com/...">
+                </div>
+            </div>
+
+            <button class="submit-button" type="submit">Publish Resource</button>
+        </form>
+
+        <section class="resource-grid">
+            {% for resource in resources %}
+                <article class="dashboard-card">
+                    <span class="post-type">{{ resource.resource_type }}</span>
+                    <h2>{{ resource.title }}</h2>
+                    <p>{{ resource.description }}</p>
+                    <p class="muted-text">Contributed by {{ resource.full_name }}</p>
+
+                    <div style="margin-top: 14px;">
+                        {% if resource.file_path %}
+                            <a class="text-link" href="{{ media_url(resource.file_path) }}" download>Download File</a>
+                        {% endif %}
+
+                        {% if resource.link_url %}
+                            <a class="text-link" href="{{ resource.link_url }}" target="_blank" rel="noopener noreferrer" style="margin-left: 12px;">Open URL</a>
+                        {% endif %}
+                    </div>
+                </article>
+            {% else %}
+                <div class="empty-feed" style="grid-column: 1 / -1;">
+                    <h2>No repository resources found</h2>
+                    <p>Contribute the first study guide or reference material above.</p>
+                </div>
+            {% endfor %}
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Students | IVY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('feed') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="IVY">
+        </a>
+
+        <nav class="nav-links" id="navLinks">
+            <a href="{{ url_for('feed') }}">Feed</a>
+            <a href="{{ url_for('profile') }}">Profile</a>
+            <a href="{{ url_for('students') }}" class="active">Students</a>
+            <a href="{{ url_for('messages') }}">Messages</a>
+            <a href="{{ url_for('notifications') }}">Notifications</a>
+            <a href="{{ url_for('resources') }}">Resources</a>
+            <a href="{{ url_for('search') }}">Search</a>
+            <a href="{{ url_for('ai_assistant') }}">AI</a>
+            <a href="{{ url_for('logout') }}">Sign Out</a>
+        </nav>
+
+        <div class="topbar-actions">
+            <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+            <button class="menu-button" id="menuButton" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="dashboard-page">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="section-heading">
+            <h1>Student Directory</h1>
+            <p>Connect with peers across departments and build your academic network on IVY.</p>
+        </section>
+
+        <section class="dashboard-grid">
+            <article class="dashboard-card">
+                <h2>Connection Requests</h2>
+                {% if pending_requests %}
+                    {% for request_item in pending_requests %}
+                        <div class="student-row">
+                            <div>
+                                <strong>{{ request_item.full_name }}</strong>
+                                <p>{{ request_item.department }} · {{ request_item.study_year }}</p>
+                            </div>
+                            <div class="row-actions">
+                                <form action="{{ url_for('respond_friend_request', friend_id=request_item.id, status='accepted') }}" method="POST">
+                                    <button class="small-action-button" type="submit">Accept</button>
+                                </form>
+                                <form action="{{ url_for('respond_friend_request', friend_id=request_item.id, status='rejected') }}" method="POST">
+                                    <button class="small-action-button light-button" type="submit">Decline</button>
+                                </form>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="muted-text">No pending connection requests.</p>
+                {% endif %}
+            </article>
+
+            <article class="dashboard-card">
+                <h2>Discover Peers</h2>
+                {% if students %}
+                    {% for student in students %}
+                        <div class="student-row">
+                            <div>
+                                <strong>{{ student.full_name }}</strong>
+                                <p>{{ student.department }} · {{ student.study_year }}</p>
+                            </div>
+                            <div class="row-actions">
+                                <form action="{{ url_for('send_friend_request', receiver_id=student.id) }}" method="POST">
+                                    <button class="small-action-button" type="submit">Connect</button>
+                                </form>
+                                <form action="{{ url_for('follow', following_id=student.id) }}" method="POST">
+                                    <button class="small-action-button light-button" type="submit">Follow</button>
+                                </form>
+                                <form action="{{ url_for('unfollow', following_id=student.id) }}" method="POST">
+                                    <button class="delete-comment-button" type="submit">Unfollow</button>
+                                </form>
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="muted-text">No other students registered yet.</p>
+                {% endif %}
+            </article>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

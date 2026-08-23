@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IVY AI Assistant</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('feed') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="IVY">
+        </a>
+
+        <nav class="nav-links" id="navLinks">
+            <a href="{{ url_for('feed') }}">Feed</a>
+            <a href="{{ url_for('profile') }}">Profile</a>
+            <a href="{{ url_for('students') }}">Students</a>
+            <a href="{{ url_for('messages') }}">Messages</a>
+            <a href="{{ url_for('notifications') }}">Notifications</a>
+            <a href="{{ url_for('resources') }}">Resources</a>
+            <a href="{{ url_for('search') }}">Search</a>
+            <a href="{{ url_for('ai_assistant') }}" class="active">AI</a>
+            <a href="{{ url_for('logout') }}">Sign Out</a>
+        </nav>
+
+        <div class="topbar-actions">
+            <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+            <button class="menu-button" id="menuButton" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </header>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}
+            <div class="flash-message">{{ messages[0] }}</div>
+        {% endif %}
+    {% endwith %}
+
+    <main class="messages-workspace {% if selected_conversation %}has-open-conversation{% endif %}"
+        id="aiWorkspace">
+            <!-- ── Conversation sidebar ─────────────────────────────── -->
+            <aside class="conversation-sidebar">
+                <div class="inbox-heading">
+                    <div>
+                        <span class="eyebrow-label">AI Assistant</span>
+                        <h1>IVY Chats</h1>
+                    </div>
+                    <form action="{{ url_for('create_ai_conversation') }}" method="POST">
+                        <button type="submit" class="new-conversation-button" title="Start a new AI conversation">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                            New Chat
+                        </button>
+                    </form>
+                </div>
+
+                <label class="conversation-search">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+                    <input type="text" id="conversationSearch" placeholder="Search chats" aria-label="Search conversations" autocomplete="off">
+                </label>
+
+                <div class="conversation-list">
+                    {% for conversation in conversations %}
+                    <div class="conversation-item {% if selected_conversation and selected_conversation.id == conversation.id %}is-active{% endif %}"
+                         data-conversation-id="{{ conversation.id }}"
+                         data-conversation-name="{{ conversation.title|lower }}">
+                        <a class="ai-chat-link" href="{{ url_for('open_ai_conversation', conversation_id=conversation.id) }}">
+                            <div class="conversation-avatar ai-chat-avatar">✦</div>
+                            <div class="conversation-copy">
+                                <div class="conversation-name-row">
+                                    <strong>{{ conversation.title }}</strong>
+                                    <time datetime="{{ conversation.updated_at.isoformat() if conversation.updated_at else '' }}">{{ conversation.updated_at.strftime('%H:%M') if conversation.updated_at else '' }}</time>
+                                </div>
+                                <div class="conversation-preview-row">
+                                    <span class="conversation-preview">{% if conversation.last_role == 'assistant' %}IVY: {% elif conversation.last_role == 'user' %}You: {% endif %}{{ conversation.last_message or 'No messages yet' }}</span>
+                                </div>
+                            </div>
+                        </a>
+                        <details class="ai-chat-menu">
+                            <summary aria-label="Chat options">&#8943;</summary>
+                            <div class="ai-chat-menu-popover">
+                                <button type="button" class="ai-menu-action" data-rename="{{ conversation.id }}" data-title="{{ conversation.title }}">Rename</button>
+                                <button type="button" class="ai-menu-action is-danger" data-delete="{{ conversation.id }}">Delete</button>
+                            </div>
+                        </details>
+                    </div>
+                    {% else %}
+                    <div class="empty-conversations">
+                        <div class="empty-conversations-icon">✦</div>
+                        <strong>No AI chats yet</strong>
+                        <p>Tap New Chat and ask IVY anything. Every chat keeps its own memory.</p>
+                    </div>
+                    {% endfor %}
+                    <p class="no-search-results" id="noSearchResults" hidden>No chats found.</p>
+                </div>
+            </aside>
+
+            <!-- ── Conversation panel ───────────────────────────────── -->
+            <section class="conversation-panel" aria-live="polite">
+                {% if selected_conversation %}
+                <header class="conversation-header">
+                    <a class="mobile-back-button" href="{{ url_for('ai_assistant') }}" aria-label="Back to chats">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                    </a>
+                    <div class="conversation-avatar header-avatar ai-chat-avatar">✦</div>
+                    <div class="conversation-title-block">
+                        <h2 id="aiHeaderTitle">{{ selected_conversation.title }}</h2>
+                        <p><span class="online-dot"></span> Private IVY chat · {{ chat_messages|length }} messages</p>
+                    </div>
+                    <div class="ai-header-actions">
+                        <button type="button" class="icon-action" id="renameChatBtn" data-open-modal="renameAiModal" aria-label="Rename chat" title="Rename chat">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+                        </button>
+                        <button type="button" class="icon-action is-danger" id="deleteChatBtn" aria-label="Delete chat" title="Delete chat">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        </button>
+                    </div>
+                </header>
+
+                <div class="chat-timeline" id="aiChatBox">
+                    {% for message in chat_messages %}
+                    {% set is_user = message.role == 'user' %}
+                    <article class="message-row {% if is_user %}is-own{% else %}is-ivy{% endif %}">
+                        {% if not is_user %}<div class="message-avatar ivy-avatar">✦</div>{% endif %}
+                        <div class="message-stack">
+                            <div class="message-sender-line">
+                                <strong>{{ 'You' if is_user else 'IVY' }}</strong>
+                                {% if not is_user %}<span class="ivy-badge">AI learning assistant</span>{% endif %}
+                                <time datetime="{{ message.created_at.isoformat() if message.created_at else '' }}">{{ message.created_at.strftime('%H:%M') if message.created_at else '' }}</time>
+                            </div>
+                            <div class="message-bubble {% if not is_user %}ivy-message{% endif %}">
+                                <div class="message-content" {% if not is_user %}data-markdown="true"{% endif %}>{{ message.content }}</div>
+                            </div>
+                        </div>
+                    </article>
+                    {% else %}
+                    <div class="conversation-welcome">
+                        <div class="welcome-orbit">✦</div>
+                        <h3>{{ selected_conversation.title }}</h3>
+                        <p>This chat is empty. Ask about any subject, paste code, or request a study plan.</p>
+                        <span>IVY remembers the context of <strong>this chat only</strong>.</span>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <form class="message-composer" id="aiChatForm" novalidate>
+                    <input type="hidden" id="aiConversationId" value="{{ selected_conversation.id }}">
+                    <div class="composer-shell">
+                        <textarea id="aiMessageText" maxlength="4000" rows="1" placeholder="Message IVY…" aria-label="Message IVY"></textarea>
+                        <div class="composer-footer">
+                            <span class="composer-counter" id="ivyThinking" hidden>✦ IVY is thinking…</span>
+                            <button id="aiSendBtn" class="send-message-button" type="submit" aria-label="Send message">
+                                <span>Send</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                </form>
+                {% else %}
+                <div class="chat-timeline">
+                    <div class="message-empty-state">
+                        <div class="empty-state-mark">✦</div>
+                        <h2>Your personal AI tutor</h2>
+                        <p>Create a chat for every subject — <strong>DBMS, Python, DSA</strong> — and IVY keeps each conversation's context separate.</p>
+                        <div class="empty-state-actions">
+                            <form action="{{ url_for('create_ai_conversation') }}" method="POST">
+                                <button type="submit" class="call-invitation-join">+ Start your first chat</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </section>
+    </main>
+
+    <!-- ── Rename modal ─────────────────────────────────────────── -->
+    <div class="modal-backdrop" id="renameAiModal" hidden>
+        <div class="conversation-modal">
+            <button class="modal-close" type="button" data-close-modal aria-label="Close">&times;</button>
+            <h2>Rename chat</h2>
+            <p class="modal-description">Give this conversation a title you'll recognise later.</p>
+            <form id="renameAiForm">
+                <label class="field-label" for="renameAiTitle">Chat title</label>
+                <input type="text" id="renameAiTitle" maxlength="80" autocomplete="off" required>
+                <button class="modal-submit" type="submit">Save title</button>
+            </form>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+    <script src="{{ url_for('static', filename='ai_chat.js') }}"></script>
+</body>
+</html>

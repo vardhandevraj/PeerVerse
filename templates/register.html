@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Account | IVY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('index') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="IVY">
+        </a>
+
+        <nav class="nav-links" id="navLinks">
+            <a href="{{ url_for('index') }}">Home</a>
+            <a href="{{ url_for('login') }}">Login</a>
+        </nav>
+
+        <div class="topbar-actions">
+            <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+            <button class="menu-button" id="menuButton" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="auth-page">
+        <section class="auth-panel">
+            <div class="auth-intro">
+                <div class="eyebrow">Join the Network</div>
+                <h1>Create your student profile</h1>
+                <p>
+                    Set up your account to connect with classmates, collaborate on coursework, and access AI-driven academic tools on IVY.
+                </p>
+            </div>
+
+            <form class="auth-form" action="{{ url_for('register') }}" method="POST">
+                {% with messages = get_flashed_messages() %}
+                    {% if messages %}
+                        <div class="flash-message">
+                            {{ messages[0] }}
+                        </div>
+                    {% endif %}
+                {% endwith %}
+
+                <div class="form-row">
+                    <label for="full_name">Full Name</label>
+                    <input type="text" id="full_name" name="full_name" placeholder="Alex Morgan" required>
+                </div>
+
+                <div class="form-row">
+                    <label for="email">Email Address</label>
+                    <input type="email" id="email" name="email" placeholder="alex@university.edu" required>
+                </div>
+
+                <div class="form-row">
+                    <label for="department">Department / Major</label>
+                    <input type="text" id="department" name="department" placeholder="Computer Science & Engineering" required>
+                </div>
+
+                <div class="form-row two-columns">
+                    <div>
+                        <label for="year">Academic Year</label>
+                        <select id="year" name="year" required>
+                            <option value="">Select year</option>
+                            <option value="1st Year">1st Year</option>
+                            <option value="2nd Year">2nd Year</option>
+                            <option value="3rd Year">3rd Year</option>
+                            <option value="4th Year">4th Year</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" placeholder="••••••••" required>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <label for="bio">Short Academic Bio</label>
+                    <textarea id="bio" name="bio" rows="3" placeholder="Brief summary of your academic interests and projects..."></textarea>
+                </div>
+
+                <button class="submit-button" type="submit">Create Account</button>
+
+                <p class="form-note">
+                    Already have an account?
+                    <a class="text-link" href="{{ url_for('login') }}">Sign in here</a>.
+                </p>
+            </form>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

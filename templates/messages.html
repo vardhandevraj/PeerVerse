@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages | IVY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function () {
+            const savedTheme = localStorage.getItem("ivy-theme") ||
+                (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+</head>
+
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('feed') }}"><img class="brand-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="IVY"></a>
+        <nav class="nav-links" id="navLinks">
+            <a href="{{ url_for('feed') }}">Feed</a><a href="{{ url_for('profile') }}">Profile</a><a
+                href="{{ url_for('students') }}">Students</a><a href="{{ url_for('messages') }}"
+                class="active">Messages</a><a href="{{ url_for('notifications') }}">Notifications</a><a
+                href="{{ url_for('resources') }}">Resources</a><a href="{{ url_for('search') }}">Search</a><a
+                href="{{ url_for('ai_assistant') }}">AI</a><a href="{{ url_for('logout') }}">Sign Out</a>
+        </nav>
+        <div class="topbar-actions">
+            <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2" />
+                    <path d="M12 20v2" />
+                    <path d="m4.93 4.93 1.41 1.41" />
+                    <path d="m17.66 17.66 1.41 1.41" />
+                    <path d="M2 12h2" />
+                    <path d="M20 12h2" />
+                    <path d="m6.34 17.66-1.41 1.41" />
+                    <path d="m19.07 4.93-1.41 1.41" />
+                </svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
+                    fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 3a6 6 0 0 0 9 9 9 0 1 1-9-9Z" />
+                </svg>
+            </button>
+            <button class="menu-button" id="menuButton"
+                aria-label="Toggle menu"><span></span><span></span><span></span></button>
+        </div>
+    </header>
+
+    <main class="messages-workspace {% if selected_conversation %}has-open-conversation{% endif %}"
+        id="messagesWorkspace">
+        <aside class="conversation-sidebar" id="conversationSidebar" aria-label="Conversations">
+            <div class="inbox-heading">
+                <div>
+                    <p class="eyebrow-label">PEERVERSE</p>
+                    <h1>Messages</h1>
+                </div>
+                <button class="icon-action" type="button" data-open-modal="newChatModal" aria-label="Start a new chat"
+                    title="New chat"><svg xmlns="http://www.w3.org/2000/svg" width="19" height="19" viewBox="0 0 24 24"
+                        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                        stroke-linejoin="round">
+                        <path d="M12 5v14M5 12h14" />
+                    </svg></button>
+            </div>
+            <div class="inbox-actions">
+                <button class="new-conversation-button" type="button" data-open-modal="newChatModal"><svg
+                        xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        <line x1="9" y1="10" x2="15" y2="10" />
+                        <line x1="12" y1="7" x2="12" y2="13" />
+                    </svg>New chat</button>
+                <button class="new-group-button" type="button" data-open-modal="newGroupModal"><svg
+                        xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M19 8v6M22 11h-6" />
+                    </svg>New group</button>
+            </div>
+            <label class="conversation-search" for="conversationSearch"><svg xmlns="http://www.w3.org/2000/svg"
+                    width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="m21 21-4.35-4.35" />
+                </svg><input id="conversationSearch" type="search" placeholder="Search conversations"
+                    autocomplete="off"></label>
+
+            <div class="conversation-list" id="conversationList">
+                {% for conversation in conversations %}
+                <a class="conversation-item {% if selected_conversation and selected_conversation.id == conversation.id %}is-active{% endif %}"
+                    href="{{ url_for('messages', conversation_id=conversation.id) }}"
+                    data-conversation-id="{{ conversation.id }}"
+                    data-conversation-name="{{ conversation.display_name|lower }}">
+                    <div class="conversation-avatar {% if conversation.is_group %}group-avatar{% endif %}">
+                        {% if conversation.is_group and conversation.avatar_path %}<img
+                            src="{{ media_url(conversation.avatar_path) }}"
+                            alt="{{ conversation.display_name }} group avatar">
+                        {% elif not conversation.is_group and conversation.other_user_picture and
+                        conversation.other_user_picture != 'default_profile.png' %}<img
+                            src="{{ media_url(conversation.other_user_picture) }}"
+                            alt="{{ conversation.display_name }} profile picture">
+                        {% else %}<span>{{ conversation.display_name[:1]|upper }}</span>{% endif %}
+                    </div>
+                    <div class="conversation-copy">
+                        <div class="conversation-name-row"><strong>{{ conversation.display_name }}</strong><time
+                                datetime="{{ conversation.updated_at.isoformat() if conversation.updated_at else '' }}">{{
+                                conversation.updated_at.strftime('%H:%M') if conversation.updated_at else '' }}</time>
+                        </div>
+                        <div class="conversation-preview-row"><span
+                                class="conversation-preview {% if conversation.unread_count %}has-unread{% endif %}">{%
+                                if conversation.last_message_type == 'ai' %}IVY: {% endif %}{{ conversation.last_message
+                                or 'No messages yet' }}</span><span
+                                class="unread-count {% if not conversation.unread_count %}is-empty{% endif %}">{{
+                                conversation.unread_count or '' }}</span></div>
+                    </div>
+                </a>
+                {% else %}
+                <div class="empty-conversations" id="emptyConversations">
+                    <div class="empty-conversations-icon">✦</div><strong>Your conversations live here</strong>
+                    <p>Start a one-to-one chat or build a study group.</p>
+                </div>
+                {% endfor %}
+                <p class="no-search-results" id="noSearchResults" hidden>No conversations found.</p>
+            </div>
+        </aside>
+
+        <section class="conversation-panel" aria-live="polite">
+            {% if selected_conversation %}
+            <header class="conversation-header">
+                <a class="mobile-back-button" href="{{ url_for('messages') }}" aria-label="Back to conversations"><svg
+                        xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="m15 18-6-6 6-6" />
+                    </svg></a>
+                <div
+                    class="conversation-avatar header-avatar {% if selected_conversation.is_group %}group-avatar{% endif %}">
+                    {% if selected_conversation.is_group and selected_conversation.avatar_path %}<img
+                        src="{{ media_url(selected_conversation.avatar_path) }}" alt="">{% else %}<span>{{
+                        selected_conversation.display_name[:1]|upper }}</span>{% endif %}</div>
+                <div class="conversation-title-block">
+                    <h2>{{ selected_conversation.display_name }}</h2>{% if selected_conversation.is_group %}<p>{{
+                        selected_members|length }} members · Created {{ selected_conversation.created_at.strftime('%d %b
+                        %Y') }}</p>{% else %}<p>Peer learning chat{% if selected_conversation.other_user_department %} ·
+                        {{ selected_conversation.other_user_department }}{% endif %}</p>{% endif %}
+                </div>
+                <div class="conversation-header-actions" style="display: flex; gap: 8px; align-items: center;">
+                    <form action="{{ url_for('start_call_room', conversation_id=selected_conversation.id) }}"
+                        method="POST">
+                        <button id="startCallBtn" class="icon-action" type="submit"
+                            aria-label="Start learning room call" title="Start learning room call"
+                            style="background: none; border: none; cursor: pointer; color: inherit; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 6px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5" />
+                                <rect x="2" y="6" width="14" height="12" rx="2" />
+                            </svg>
+                        </button>
+                    </form>
+                    <details class="conversation-info-menu">
+                        <summary aria-label="Conversation information"><svg xmlns="http://www.w3.org/2000/svg"
+                                width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10" />
+                                <path d="M12 16v-4M12 8h.01" />
+                            </svg></summary>
+                        <div class="conversation-popover">{% if selected_conversation.is_group %}<strong>{{
+                                selected_conversation.display_name }}</strong>
+                            <p>Created by {{ selected_conversation.creator_name or 'a PeerVerse student' }}</p>
+                            <p>Last activity {{ selected_conversation.updated_at.strftime('%d %b, %H:%M') }}</p>
+                            <div class="member-stack">{% for member in selected_members[:6] %}<span
+                                    title="{{ member.full_name }}">{{ member.full_name[:1]|upper }}</span>{% endfor %}{%
+                                if selected_members|length > 6 %}<span>+{{ selected_members|length - 6 }}</span>{% endif
+                                %}</div>{% if selected_conversation.created_by == user.id and available_group_members
+                            %}<button class="popover-action" type="button" data-open-modal="addMembersModal">Add
+                                members</button>{% endif %}{% else %}<strong>One-to-one conversation</strong>
+                            <p>Only the two participants can access these messages.</p>{% endif %}
+                        </div>
+                    </details>
+                </div>
+            </header>
+
+            <div class="chat-timeline" id="chatBox">
+                {% for message in chat_messages %}
+                {% set is_ivy = message.message_type == 'ai' or message.sender_id == None %}
+                <article
+                    class="message-row {% if message.sender_id == user.id %}is-own{% endif %} {% if is_ivy %}is-ivy{% endif %}">
+                    {% if message.sender_id != user.id %}<div
+                        class="message-avatar {% if is_ivy %}ivy-avatar{% endif %}">{{ '✦' if is_ivy else
+                        message.sender_name[:1]|upper }}</div>{% endif %}
+                    <div class="message-stack">
+                        <div class="message-sender-line"><strong>{{ 'IVY' if is_ivy else message.sender_name
+                                }}</strong>{% if is_ivy %}<span class="ivy-badge">AI learning assistant</span>{% endif
+                            %}<time datetime="{{ message.created_at.isoformat() if message.created_at else '' }}">{{
+                                message.created_at.strftime('%H:%M') if message.created_at else '' }}</time></div>
+                        <div class="message-bubble {% if is_ivy %}ivy-message{% endif %}">
+                            <div class="message-content" {% if is_ivy %}data-markdown="true" {% endif %}>{{
+                                message.message_text }}</div>
+                        </div>
+                    </div>
+                </article>
+                {% else %}
+                <div class="conversation-welcome">
+                    <div class="welcome-orbit">✦</div>
+                    <h3>{{ selected_conversation.display_name }}</h3>
+                    <p>{% if selected_conversation.is_group %}This group is ready for ideas, resources, and study
+                        sessions.{% else %}Start the conversation and learn together.{% endif %}</p><span>Use
+                        <strong>@ivy</strong> whenever you want an AI learning hand.</span>
+                </div>
+                {% endfor %}
+            </div>
+
+            <form class="message-composer" id="chatForm" novalidate>
+                <input type="hidden" id="conversationId" value="{{ selected_conversation.id }}"><input type="hidden"
+                    id="currentUserId" value="{{ user.id }}">
+                <div class="composer-shell"><textarea id="messageText" maxlength="4000" rows="1"
+                        placeholder="Message {{ selected_conversation.display_name }}"
+                        aria-label="Write a message"></textarea>
+                    <div class="composer-footer"><span class="ivy-mention-hint"><span>✦</span> Mention
+                            <strong>@ivy</strong> for learning help</span><button id="sendBtn"
+                            class="send-message-button" type="submit" aria-label="Send message"><span>Send</span><svg
+                                xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24"
+                                fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                                stroke-linejoin="round">
+                                <path d="m22 2-7 20-4-9-9-4Z" />
+                                <path d="M22 2 11 13" />
+                            </svg></button></div>
+                </div>
+            </form>
+            {% else %}
+            <div class="message-empty-state">
+                <div class="empty-state-mark"><span>✦</span></div>
+                <p class="eyebrow-label">YOUR INBOX</p>
+                <h2>A calmer place to learn together.</h2>
+                <p>Choose a conversation or start a focused chat. Bring IVY into any conversation with a simple
+                    <strong>@ivy</strong> mention.</p>
+                <div class="empty-state-actions"><button class="new-conversation-button" type="button"
+                        data-open-modal="newChatModal">Start a chat</button><button class="new-group-button"
+                        type="button" data-open-modal="newGroupModal">Create a group</button></div>
+            </div>
+            {% endif %}
+        </section>
+    </main>
+
+    {% with flashes = get_flashed_messages() %}{% if flashes %}<div class="chat-flash" role="status">{{ flashes[0] }}
+    </div>{% endif %}{% endwith %}
+
+    <div class="modal-backdrop" id="newChatModal" hidden>
+        <section class="conversation-modal" role="dialog" aria-modal="true" aria-labelledby="newChatTitle"><button
+                class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
+            <p class="eyebrow-label">ONE-TO-ONE</p>
+            <h2 id="newChatTitle">Start a new chat</h2>
+            <p class="modal-description">Search for a student. If you already have a chat together, PeerVerse will open
+                it instead.</p>
+            <form action="{{ url_for('new_conversation') }}" method="POST"><label class="field-label"
+                    for="newChatStudentSearch">Find a student</label><input id="newChatStudentSearch" type="search"
+                    data-student-filter="newChatUser" placeholder="Name or department" autocomplete="off"><label
+                    class="field-label" for="newChatUser">Student</label><select id="newChatUser" name="user_id"
+                    required>
+                    <option value="" selected disabled>Select a student</option>{% for student in users %}<option
+                        value="{{ student.id }}">{{ student.full_name }} · {{ student.department }}</option>{% endfor %}
+                </select><button type="submit" class="modal-submit">Start chat</button></form>
+        </section>
+    </div>
+
+    <div class="modal-backdrop" id="newGroupModal" hidden>
+        <section class="conversation-modal group-modal" role="dialog" aria-modal="true" aria-labelledby="newGroupTitle">
+            <button class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
+            <p class="eyebrow-label">STUDY TOGETHER</p>
+            <h2 id="newGroupTitle">Create a group</h2>
+            <form action="{{ url_for('create_group_conversation') }}" method="POST" enctype="multipart/form-data"><label
+                    class="field-label" for="groupTitle">Group name</label><input id="groupTitle" name="title"
+                    maxlength="100" placeholder="e.g. DBMS exam prep" required><label class="field-label"
+                    for="groupImage">Group image <span>optional</span></label><input id="groupImage" name="group_image"
+                    type="file" accept="image/png,image/jpeg,image/gif">
+                <fieldset class="member-picker">
+                    <legend>Select students</legend>
+                    <div class="member-picker-list">{% for student in users %}<label class="member-option"><input
+                                type="checkbox" name="member_ids" value="{{ student.id }}"><span class="mini-avatar">{{
+                                student.full_name[:1]|upper }}</span><span>{{ student.full_name }}<small>{{
+                                    student.department }}</small></span></label>{% endfor %}</div>
+                </fieldset><button type="submit" class="modal-submit">Create group</button>
+            </form>
+        </section>
+    </div>
+
+    {% if selected_conversation and selected_conversation.is_group and selected_conversation.created_by == user.id and
+    available_group_members %}
+    <div class="modal-backdrop" id="addMembersModal" hidden>
+        <section class="conversation-modal group-modal" role="dialog" aria-modal="true"
+            aria-labelledby="addMembersTitle"><button class="modal-close" type="button" data-close-modal
+                aria-label="Close">×</button>
+            <p class="eyebrow-label">GROUP ADMIN</p>
+            <h2 id="addMembersTitle">Add students</h2>
+            <form action="{{ url_for('add_group_members', conversation_id=selected_conversation.id) }}" method="POST">
+                <fieldset class="member-picker">
+                    <legend>Available students</legend>
+                    <div class="member-picker-list">{% for student in available_group_members %}<label
+                            class="member-option"><input type="checkbox" name="member_ids"
+                                value="{{ student.id }}"><span class="mini-avatar">{{ student.full_name[:1]|upper
+                                }}</span><span>{{ student.full_name }}<small>{{ student.department
+                                    }}</small></span></label>{% endfor %}</div>
+                </fieldset><button type="submit" class="modal-submit">Add selected students</button>
+            </form>
+        </section>
+    </div>
+    {% endif %}
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+
+</html>

@@ -1,0 +1,9 @@
+Flask==3.0.3
+Flask-SocketIO==5.3.6
+groq
+psycopg2-binary
+supabase
+python-dotenv
+Werkzeug
+eventlet
+gunicorn==21.2.0
