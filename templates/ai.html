@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>IVY AI Assistant</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script>
@@ -60,12 +61,19 @@
                         <span class="eyebrow-label">AI Assistant</span>
                         <h1>IVY Chats</h1>
                     </div>
-                    <form action="{{ url_for('create_ai_conversation') }}" method="POST">
-                        <button type="submit" class="new-conversation-button" title="Start a new AI conversation">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                            New Chat
+                    <div class="inbox-heading-actions">
+                        <button type="button" class="new-conversation-button" id="openPlannerBtn" title="AI Study Planner">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                            Planner
                         </button>
-                    </form>
+                        <form action="{{ url_for('create_ai_conversation') }}" method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="new-conversation-button" title="Start a new AI conversation">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+                                New Chat
+                            </button>
+                        </form>
+                    </div>
                 </div>
 
                 <label class="conversation-search">
@@ -178,14 +186,35 @@
                         <p>Create a chat for every subject — <strong>DBMS, Python, DSA</strong> — and IVY keeps each conversation's context separate.</p>
                         <div class="empty-state-actions">
                             <form action="{{ url_for('create_ai_conversation') }}" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <button type="submit" class="call-invitation-join">+ Start your first chat</button>
                             </form>
+                            <button type="button" class="call-invitation-join" id="emptyStatePlannerBtn">Generate a study plan</button>
                         </div>
                     </div>
                 </div>
                 {% endif %}
             </section>
     </main>
+
+    <!-- ── Study Planner modal ─────────────────────────────────────── -->
+    <div class="modal-backdrop" id="studyPlannerModal" hidden>
+        <div class="conversation-modal">
+            <button class="modal-close" type="button" data-close-modal aria-label="Close">&times;</button>
+            <p class="eyebrow-label">AI STUDY PLANNER</p>
+            <h2>Generate a study plan</h2>
+            <p class="modal-description">IVY builds a week-by-week plan, saved as a new chat you can revisit anytime.</p>
+            <div class="study-planner-modal-fields">
+                <label class="field-label" for="planSubject">Subject</label>
+                <input type="text" id="planSubject" class="study-planner-input" placeholder="e.g. Operating Systems" required>
+                <label class="field-label" for="planWeeks">Weeks until exam</label>
+                <input type="number" id="planWeeks" class="study-planner-input" min="1" max="16" value="4" required>
+                <label class="field-label" for="planHours">Hours available per day</label>
+                <input type="number" id="planHours" class="study-planner-input" min="1" max="12" value="2" required>
+            </div>
+            <button class="modal-submit" type="button" id="makePlanBtn">Generate my study plan</button>
+        </div>
+    </div>
 
     <!-- ── Rename modal ─────────────────────────────────────────── -->
     <div class="modal-backdrop" id="renameAiModal" hidden>

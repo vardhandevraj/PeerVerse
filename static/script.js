@@ -298,29 +298,3 @@ document.addEventListener("DOMContentLoaded", () => {
         initializeCallInvitations(socket);
     }
 });
-
-// A subtle desktop-only cursor glow is shared across the application.
-(function initializeAmbientGlow() {
-    if (window.innerWidth < 800) return;
-    const glow = document.createElement("div");
-    glow.className = "ambient-cursor-glow";
-    document.body.appendChild(glow);
-    let mouseX = -500;
-    let mouseY = -500;
-    let currentX = -500;
-    let currentY = -500;
-    window.addEventListener("mousemove", (event) => {
-        mouseX = event.clientX;
-        mouseY = event.clientY;
-        glow.style.opacity = "1";
-    });
-    window.addEventListener("mouseleave", () => { glow.style.opacity = "0"; });
-    const render = () => {
-        currentX += (mouseX - currentX) * 0.08;
-        currentY += (mouseY - currentY) * 0.08;
-        glow.style.left = `${currentX}px`;
-        glow.style.top = `${currentY}px`;
-        window.requestAnimationFrame(render);
-    };
-    render();
-})();

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IVY — Next-Gen Peer Learning & AI</title>
+    <title>IVY — Peer Learning Network</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script>
         (function() {
@@ -21,8 +21,6 @@
 
         <nav class="nav-links" id="navLinks">
             <a href="#features">Features</a>
-            <a href="#learning">Learning</a>
-            <a href="#ai">AI Assistant</a>
             {% if session.get("user_id") %}
                 <a href="{{ url_for('feed') }}">Feed</a>
                 <a href="{{ url_for('profile') }}">Profile</a>
@@ -53,7 +51,7 @@
                 <div class="eyebrow">The Modern Student Network</div>
                 <h1>Intelligent collaboration for higher learning.</h1>
                 <p class="hero-text">
-                    Share course materials, discover study partners, and get instant contextual academic assistance powered by artificial intelligence.
+                    Share course materials, discover study partners, and collaborate on coursework in real time.
                 </p>
 
                 <div class="hero-actions">
@@ -94,7 +92,7 @@
                         <h3>Nisha Patel · Computer Science</h3>
                         <p>Can someone explain tail call optimization with an intuitive memory stack visualization?</p>
                         <div class="ai-reply">
-                            IVY generated a breakdown with stack frame diagrams.
+                            Peer reply: see the worked example with stack frame diagrams below.
                         </div>
                     </div>
                 </article>
@@ -111,13 +109,9 @@
                     <h3>Resource Exchange</h3>
                     <p>Share verified lecture notes, code snippets, and research materials in real time.</p>
                 </article>
-                <article id="learning">
+                <article>
                     <h3>Peer Network</h3>
                     <p>Connect with peers across departments, form study cohorts, and exchange direct messages.</p>
-                </article>
-                <article id="ai">
-                    <h3>AI Learning Companion</h3>
-                    <p>Get conceptual breakdowns, automated summaries, and customized study roadmaps on demand.</p>
                 </article>
             </div>
         </section>

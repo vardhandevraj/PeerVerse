@@ -95,6 +95,7 @@
                 </article>
 
                 <form class="auth-form profile-form" action="{{ url_for('profile') }}" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <h2>Edit Profile</h2>
 
                     <div class="form-row">
@@ -147,6 +148,21 @@
                     </div>
 
                     <button class="submit-button" type="submit">Save Changes</button>
+                </form>
+            </section>
+        {% endif %}
+
+        {% if profile_user %}
+            <section class="danger-zone">
+                <h2>Danger Zone</h2>
+                <p>Deleting your account permanently removes your profile, posts, comments, friendships, conversations, and uploaded resources. This cannot be undone.</p>
+                <form class="delete-account-form" action="{{ url_for('delete_account') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <label for="deleteConfirmation">Type <strong>DELETE</strong> to confirm</label>
+                    <div>
+                        <input type="text" id="deleteConfirmation" name="confirmation" placeholder="DELETE" required>
+                        <button class="submit-button danger-button" type="submit">Delete My Account</button>
+                    </div>
                 </form>
             </section>
         {% endif %}

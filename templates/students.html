@@ -62,14 +62,16 @@
                     {% for request_item in pending_requests %}
                         <div class="student-row">
                             <div>
-                                <strong>{{ request_item.full_name }}</strong>
+                                <a class="student-name-link" href="{{ url_for('public_profile', user_id=request_item.user_id) }}">{{ request_item.full_name }}</a>
                                 <p>{{ request_item.department }} · {{ request_item.study_year }}</p>
                             </div>
                             <div class="row-actions">
                                 <form action="{{ url_for('respond_friend_request', friend_id=request_item.id, status='accepted') }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="small-action-button" type="submit">Accept</button>
                                 </form>
                                 <form action="{{ url_for('respond_friend_request', friend_id=request_item.id, status='rejected') }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="small-action-button light-button" type="submit">Decline</button>
                                 </form>
                             </div>
@@ -85,19 +87,37 @@
                 {% if students %}
                     {% for student in students %}
                         <div class="student-row">
-                            <div>
-                                <strong>{{ student.full_name }}</strong>
-                                <p>{{ student.department }} · {{ student.study_year }}</p>
+                            <div class="presence-cell">
+                                <span class="presence-dot {% if is_online(student.id) %}is-online{% endif %}" title="{{ 'Online' if is_online(student.id) else 'Offline' }}"></span>
+                                <div>
+                                    <a class="student-name-link" href="{{ url_for('public_profile', user_id=student.id) }}">{{ student.full_name }}</a>
+                                    <p>{{ student.department }} · {{ student.study_year }}</p>
+                                </div>
                             </div>
                             <div class="row-actions">
                                 <form action="{{ url_for('send_friend_request', receiver_id=student.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="small-action-button" type="submit">Connect</button>
                                 </form>
                                 <form action="{{ url_for('follow', following_id=student.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="small-action-button light-button" type="submit">Follow</button>
                                 </form>
                                 <form action="{{ url_for('unfollow', following_id=student.id) }}" method="POST">
-                                    <button class="delete-comment-button" type="submit">Unfollow</button>
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="small-action-button light-button" type="submit">Unfollow</button>
+                                </form>
+                                <form action="{{ url_for('report_content') }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="target_type" value="user">
+                                    <input type="hidden" name="target_id" value="{{ student.id }}">
+                                    <select class="report-select" name="reason" required>
+                                        <option value="" selected disabled>Report</option>
+                                        <option value="spam">Spam</option>
+                                        <option value="harassment">Harassment</option>
+                                        <option value="other">Other</option>
+                                    </select>
+                                    <button class="small-action-button light-button" type="submit">Submit</button>
                                 </form>
                             </div>
                         </div>

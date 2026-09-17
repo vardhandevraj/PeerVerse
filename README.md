@@ -68,6 +68,20 @@ deleted from the sidebar. IVY only ever sees the context of the conversation
 you are typing in. For databases created before this feature, run
 `migrations/005_ai_conversations.sql` once in the Supabase SQL Editor.
 
+## Email Verification, Password Reset & Moderation
+
+New registrations must verify their email before posting, commenting, sending
+friend requests, following, creating conversations, uploading resources, or
+starting calls. Verification emails and password-reset links are sent via SMTP
+when `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD` are set; otherwise they are printed
+to the console for local development. Registered students can report posts and
+users, which admins (users with `is_admin = true`) review at `/admin/reports`.
+For databases created before these features, run
+`migrations/007_core_features.sql` once in the Supabase SQL Editor. Migration
+`006_google_auth.sql` (roles: Google Sign-In) should be applied first for
+existing databases. Fresh installs get the tables from `supabase_schema.sql`
+automatically.
+
 Production deployments should set these environment variables (see `.env.example`):
 
 - `STUN_SERVER` — comma-separated STUN URLs.

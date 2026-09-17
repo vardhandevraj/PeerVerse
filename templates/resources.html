@@ -56,6 +56,7 @@
         </section>
 
         <form class="dashboard-card resource-form" action="{{ url_for('resources') }}" method="POST" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-row two-columns">
                 <div>
                     <label for="title">Document / Resource Title</label>

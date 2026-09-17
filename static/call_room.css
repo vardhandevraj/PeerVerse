@@ -122,6 +122,10 @@
     background: #000000;
 }
 
+.video-tile video.is-mirrored {
+    transform: scaleX(-1);
+}
+
 .video-tile .video-fallback {
     position: absolute;
     inset: 0;

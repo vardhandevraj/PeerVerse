@@ -12,6 +12,9 @@
         if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
     };
 
+    const getCsrfToken = () =>
+        (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
     scrollToLatest();
 
     if (!form || !textarea || !conversationInput) return;
@@ -94,7 +97,7 @@
         try {
             const response = await fetch(`/ai/conversations/${conversationId}/message`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrfToken() },
                 body: JSON.stringify({ content }),
             });
             const result = await response.json().catch(() => ({}));
@@ -167,7 +170,7 @@
             try {
                 const response = await fetch(`/ai/conversations/${pendingRenameTarget}/rename`, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrfToken() },
                     body: JSON.stringify({ title: newTitle }),
                 });
                 const result = await response.json().catch(() => ({}));
@@ -205,7 +208,10 @@
     const deleteConversation = async (chatId, isActive) => {
         if (!window.confirm("Delete this AI conversation? Its messages will be removed permanently.")) return;
         try {
-            const response = await fetch(`/ai/conversations/${chatId}/delete?ajax=1`, { method: "POST" });
+            const response = await fetch(`/ai/conversations/${chatId}/delete?ajax=1`, {
+                method: "POST",
+                headers: { "X-CSRFToken": getCsrfToken() },
+            });
             const result = await response.json().catch(() => ({}));
             if (!response.ok || !result.ok) {
                 showChatNotice("Could not delete this chat.");
@@ -241,5 +247,63 @@
         document.querySelectorAll(".ai-chat-menu[open]").forEach((menu) => {
             if (!menu.contains(event.target)) menu.removeAttribute("open");
         });
+    });
+})();
+
+// ── AI Study Planner ────────────────────────────────────────────────────────
+(function initStudyPlanner() {
+    const modal = document.getElementById("studyPlannerModal");
+    const button = document.getElementById("makePlanBtn");
+    const openPlannerBtn = document.getElementById("openPlannerBtn");
+    const emptyStateBtn = document.getElementById("emptyStatePlannerBtn");
+    if (!modal || !button) return;
+
+    if (openPlannerBtn) {
+        openPlannerBtn.addEventListener("click", () => { modal.hidden = false; });
+    }
+    if (emptyStateBtn) {
+        emptyStateBtn.addEventListener("click", () => { modal.hidden = false; });
+    }
+    modal.querySelectorAll("[data-close-modal]").forEach((closeBtn) => {
+        closeBtn.addEventListener("click", () => { modal.hidden = true; });
+    });
+    modal.addEventListener("click", (event) => {
+        if (event.target === modal) modal.hidden = true;
+    });
+
+    const getCsrfToken = () =>
+        (document.querySelector('meta[name="csrf-token"]') || {}).content || "";
+
+    button.addEventListener("click", async () => {
+        const subject = (document.getElementById("planSubject") || {}).value?.trim();
+        const weeks = parseInt((document.getElementById("planWeeks") || {}).value, 10);
+        const hours = parseInt((document.getElementById("planHours") || {}).value, 10);
+
+        if (!subject) {
+            alert("Please enter a subject for your study plan.");
+            return;
+        }
+
+        button.disabled = true;
+        button.textContent = "Generating plan…";
+
+        try {
+            const response = await fetch("/ai/study-plan", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": getCsrfToken() },
+                body: JSON.stringify({ subject, weeks: weeks || 4, hours: hours || 2 }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.ok) {
+                alert(result.error || "Could not generate a study plan right now.");
+                return;
+            }
+            window.location.href = result.redirect || `/ai/${result.conversation_id}`;
+        } catch (error) {
+            alert("Network error — could not generate a study plan.");
+        } finally {
+            button.disabled = false;
+            button.textContent = "Generate my study plan";
+        }
     });
 })();

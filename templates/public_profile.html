@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ profile_user.full_name }} | IVY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('feed') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="IVY">
+        </a>
+
+        <nav class="nav-links" id="navLinks">
+            <a href="{{ url_for('feed') }}">Feed</a>
+            <a href="{{ url_for('profile') }}">Profile</a>
+            <a href="{{ url_for('students') }}">Students</a>
+            <a href="{{ url_for('messages') }}">Messages</a>
+            <a href="{{ url_for('notifications') }}">Notifications</a>
+            <a href="{{ url_for('resources') }}">Resources</a>
+            <a href="{{ url_for('search') }}">Search</a>
+            <a href="{{ url_for('ai_assistant') }}">AI</a>
+            {% if is_admin_user() %}
+                <a href="{{ url_for('admin_reports') }}">Moderation</a>
+            {% endif %}
+            <a href="{{ url_for('logout') }}">Sign Out</a>
+        </nav>
+
+        <div class="topbar-actions">
+            <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+            <button class="menu-button" id="menuButton" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="profile-page">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message">
+                    {{ messages[0] }}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="profile-header-card">
+            {% if profile_user.cover_photo and (profile_user.cover_photo.startswith("http") or profile_user.cover_photo.startswith("uploads/")) %}
+                <div class="cover-photo" style="background-image: url('{{ media_url(profile_user.cover_photo) }}');"></div>
+            {% else %}
+                <div class="cover-photo"></div>
+            {% endif %}
+
+            <div class="profile-summary">
+                {% if profile_user.profile_picture and (profile_user.profile_picture.startswith("http") or profile_user.profile_picture.startswith("uploads/")) %}
+                    <img class="profile-picture" src="{{ media_url(profile_user.profile_picture) }}" alt="Profile picture">
+                {% else %}
+                    <div class="profile-picture profile-initial">
+                        {{ profile_user.full_name[:1] }}
+                    </div>
+                {% endif %}
+
+                <div>
+                    <h1>
+                        {{ profile_user.full_name }}
+                        <span class="presence-dot {% if is_online(profile_user.id) %}is-online{% endif %}" title="{{ 'Online' if is_online(profile_user.id) else 'Offline' }}"></span>
+                    </h1>
+                    <p>{{ profile_user.department }} · {{ profile_user.study_year }}</p>
+                    <div class="profile-stats">
+                        <span>{{ stats.followers }} followers</span>
+                        <span>{{ stats.following }} following</span>
+                        <span>{{ stats.friends }} peers</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="profile-actions">
+                <form action="{{ url_for('new_conversation') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="user_id" value="{{ profile_user.id }}">
+                    <button class="small-action-button" type="submit">Message</button>
+                </form>
+
+                {% if relationship.is_following %}
+                    <form action="{{ url_for('unfollow', following_id=profile_user.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="small-action-button light-button" type="submit">Unfollow</button>
+                    </form>
+                {% else %}
+                    <form action="{{ url_for('follow', following_id=profile_user.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="small-action-button light-button" type="submit">Follow</button>
+                    </form>
+                {% endif %}
+
+                {% if relationship.friend_status == 'accepted' %}
+                    <form action="{{ url_for('remove_friend', friend_id=relationship.friend_request_id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="small-action-button light-button" type="submit">Remove Friend</button>
+                    </form>
+                {% elif relationship.friend_status == 'request_sent' %}
+                    <button class="small-action-button light-button" type="button" disabled>Request Sent</button>
+                {% elif relationship.friend_status == 'request_received' %}
+                    <form action="{{ url_for('respond_friend_request', friend_id=relationship.friend_request_id, status='accepted') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="small-action-button" type="submit">Accept</button>
+                    </form>
+                    <form action="{{ url_for('respond_friend_request', friend_id=relationship.friend_request_id, status='rejected') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="small-action-button light-button" type="submit">Decline</button>
+                    </form>
+                {% else %}
+                    <form action="{{ url_for('send_friend_request', receiver_id=profile_user.id) }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="small-action-button" type="submit">Add Friend</button>
+                    </form>
+                {% endif %}
+
+                <form action="{{ url_for('report_content') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="target_type" value="user">
+                    <input type="hidden" name="target_id" value="{{ profile_user.id }}">
+                    <select class="report-select" name="reason" required>
+                        <option value="" selected disabled>Report</option>
+                        <option value="spam">Spam</option>
+                        <option value="harassment">Harassment</option>
+                        <option value="other">Other</option>
+                    </select>
+                    <button class="small-action-button light-button" type="submit">Submit</button>
+                </form>
+            </div>
+        </section>
+
+        <section class="profile-grid">
+            <article class="profile-info-card">
+                <h2>About</h2>
+                <p>{{ profile_user.bio or "No bio added yet." }}</p>
+
+                <h2>Technical Skills</h2>
+                <p>{{ profile_user.skills or "No skills listed." }}</p>
+
+                <h2>Academic Interests</h2>
+                <p>{{ profile_user.interests or "No interests specified." }}</p>
+            </article>
+
+            <div>
+                <h2 class="posts-section-heading">Recent Posts</h2>
+                <div class="feed-list">
+                    {% if posts %}
+                        {% for post in posts %}
+                            <article class="feed-post">
+                                <div class="post-author-row">
+                                    <div class="avatar presence-avatar {% if is_online(post.user_id) %}is-online{% endif %}">
+                                        {{ profile_user.full_name[:1] }}
+                                    </div>
+                                    <div>
+                                        <h2>{{ profile_user.full_name }}</h2>
+                                        <p>{{ profile_user.department }} · {{ profile_user.study_year }} · {{ post.created_at }}</p>
+                                    </div>
+                                </div>
+
+                                <span class="post-type">{{ post.post_type }}</span>
+                                <p class="post-content">{{ post.content }}</p>
+
+                                {% if post.file_path %}
+                                    <div class="post-attachment">
+                                        {% if post.file_type in ["png", "jpg", "jpeg", "gif"] %}
+                                            <img src="{{ media_url(post.file_path) }}" alt="Uploaded attachment">
+                                        {% else %}
+                                            <a class="text-link" href="{{ media_url(post.file_path) }}" download>
+                                                Download Attached Document (PDF)
+                                            </a>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+
+                                <div class="post-stats">
+                                    <span>{{ post.like_count }} likes</span>
+                                    <span>{{ post.comment_count }} comments</span>
+                                </div>
+
+                                <div class="post-controls">
+                                    <form action="{{ url_for('like_post', post_id=post.id) }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="small-action-button" type="submit">
+                                            {% if post.liked_by_user %}
+                                                Liked
+                                            {% else %}
+                                                Like
+                                            {% endif %}
+                                        </button>
+                                    </form>
+                                </div>
+
+                                <div class="comments-area">
+                                    {% for comment in comments_by_post.get(post.id, []) %}
+                                        <div class="comment-item">
+                                            <div>
+                                                <strong>
+                                                    <a class="comment-author-link" href="{{ url_for('public_profile', user_id=comment.user_id) }}">{{ comment.full_name }}</a>
+                                                </strong>
+                                                <p>{{ comment.comment_text }}</p>
+                                            </div>
+                                        </div>
+                                    {% endfor %}
+
+                                    <form class="comment-form" action="{{ url_for('add_comment', post_id=post.id) }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="text" name="comment_text" placeholder="Write a response..." required>
+                                        <button type="submit">Reply</button>
+                                    </form>
+                                </div>
+                            </article>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-feed">
+                            <h2>No posts yet</h2>
+                            <p>{{ profile_user.full_name }} has not shared anything yet.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

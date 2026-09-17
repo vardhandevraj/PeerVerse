@@ -79,7 +79,10 @@
         const video = document.createElement("video");
         video.autoplay = true;
         video.playsInline = true;
-        if (userId === currentUserId) video.muted = true;
+        if (userId === currentUserId) {
+            video.muted = true;
+            video.classList.add("is-mirrored");
+        }
         tile.appendChild(video);
 
         const fallback = document.createElement("div");
@@ -438,6 +441,7 @@
                 // Show the shared screen in your own tile too.
                 const composite = new MediaStream([screenTrack]);
                 entry.video.srcObject = composite;
+                entry.video.classList.remove("is-mirrored");
                 setTileVideoActive(currentUserId, true);
             }
             broadcastMediaState();
@@ -462,7 +466,10 @@
             replaceOutgoingVideoTrack(null);
         }
         const entry = tiles.get(currentUserId);
-        if (entry) entry.video.srcObject = localStream;
+        if (entry) {
+            entry.video.srcObject = localStream;
+            entry.video.classList.add("is-mirrored");
+        }
         setTileVideoActive(currentUserId, camEnabled && Boolean(cameraTrack));
         if (!silent) broadcastMediaState();
     }

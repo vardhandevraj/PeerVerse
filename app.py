@@ -1,15 +1,22 @@
 import os
 import re
-from datetime import datetime
+import io
+import smtplib
+import secrets
+import threading
+from datetime import datetime, timedelta
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 from groq import Groq
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from supabase import create_client, Client
+from PIL import Image
 import urllib.parse
-import secrets
 from flask import Flask, flash, redirect, render_template, request, session, url_for, g
 from flask_socketio import SocketIO, emit, join_room, leave_room
+from authlib.integrations.flask_client import OAuth
 from psycopg2 import Error
 from dotenv import load_dotenv
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -18,6 +25,9 @@ from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
+# The project is often run with its .env in the parent folder, so load it as a
+# fallback when no project-local .env exists. Existing values are not overridden.
+load_dotenv(os.path.join(os.path.dirname(BASE_DIR), ".env"))
 
 # Create the Flask application.
 # Flask uses this object to handle routes, templates, sessions, and static files.
@@ -29,6 +39,21 @@ app.secret_key = os.environ.get("SECRET_KEY", "campus-connect-ai-beginner-secret
 
 # SocketIO adds real-time messaging support to the Flask app.
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Google OAuth Sign-In. The client is only registered when the credentials are
+# present in the environment, so the app keeps working without Google set up.
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+
+oauth = OAuth(app)
+if GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET:
+    oauth.register(
+        name="google",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+        client_kwargs={"scope": "openid email profile"},
+    )
 
 # Uploaded files are saved inside static/uploads.
 app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
@@ -112,14 +137,25 @@ def save_uploaded_file(uploaded_file, file_prefix, bucket_name):
     """Save an uploaded file and return the path stored in Supabase."""
     if supabase is None:
         return ""
+
     safe_name = secure_filename(uploaded_file.filename)
+    original_name = (safe_name or "file").lower()
+    is_image = original_name.rsplit(".", 1)[-1] in app.config["IMAGE_EXTENSIONS"] if "." in original_name else False
+
+    if is_image:
+        # Compress / downscale images before upload to keep the feed fast.
+        data, content_type = compress_image_bytes(uploaded_file, max_dimension=1600)
+        safe_name = safe_name.rsplit(".", 1)[0] + ".jpg" if safe_name and "." in safe_name else (safe_name or "image.jpg")
+    else:
+        data = uploaded_file.read()
+        content_type = uploaded_file.mimetype or "application/octet-stream"
+
     upload_time = datetime.now().strftime("%Y%m%d%H%M%S")
     object_path = f"{file_prefix}_{upload_time}_{safe_name}"
-    uploaded_file.stream.seek(0)
     supabase.storage.from_(bucket_name).upload(
         object_path,
-        uploaded_file.read(),
-        {"content-type": uploaded_file.mimetype or "application/octet-stream"},
+        data,
+        {"content-type": content_type},
     )
     return supabase.storage.from_(bucket_name).get_public_url(object_path)
 
@@ -139,6 +175,19 @@ def get_logged_in_user():
 def login_required():
     """Return True if a student is logged in."""
     return "user_id" in session
+
+
+def redirect_back(default_endpoint, **values):
+    """Redirect back to the page the request came from when it is internal."""
+    referrer = request.referrer
+    if referrer:
+        try:
+            referrer_host = urllib.parse.urlsplit(referrer).netloc
+        except ValueError:
+            referrer_host = ""
+        if referrer_host == request.host:
+            return redirect(referrer)
+    return redirect(url_for(default_endpoint, **values))
 
 
 def create_notification(user_id, actor_id, notification_type, message):
@@ -169,6 +218,277 @@ def create_notification(user_id, actor_id, notification_type, message):
             if "cursor" in locals():
                 cursor.close()
             connection.close()
+
+
+# ── CSRF Protection ─────────────────────────────────────────────────────────
+def generate_csrf_token():
+    """Return the session's CSRF token, creating one on first use."""
+    if "csrf_token" not in session:
+        session["csrf_token"] = secrets.token_hex(32)
+    return session["csrf_token"]
+
+
+def csrf_valid():
+    """Compare a submitted token against the session token."""
+    expected = session.get("csrf_token")
+    if not expected:
+        return False
+    submitted = request.headers.get("X-CSRFToken") or request.form.get("csrf_token")
+    return submitted == expected
+
+
+@app.before_request
+def protect_from_csrf():
+    """Reject state-changing requests that do not carry a valid CSRF token."""
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        # SocketIO long-polling transport uses HTTP POST to /socket.io/ without
+        # a page-level CSRF token; it performs its own auth, so exempt it.
+        if request.path.startswith("/socket.io/"):
+            return
+        if not csrf_valid():
+            if request.headers.get("X-Requested-With") == "fetch" or request.is_json:
+                return {"ok": False, "error": "Security token missing or expired."}, 400
+            flash("Your session expired. Please try again.")
+            return redirect(request.referrer or url_for("index"))
+
+
+@app.context_processor
+def inject_csrf_token():
+    return {"csrf_token": generate_csrf_token}
+
+
+# ── Email delivery (SMTP with a development fallback) ───────────────────────
+def send_email(to_address, subject, html_body):
+    """Send an HTML email. Without SMTP configured, print it to the console."""
+    smtp_host = os.environ.get("SMTP_HOST")
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER")
+    smtp_password = os.environ.get("SMTP_PASSWORD")
+    from_address = os.environ.get("SMTP_FROM", smtp_user or "noreply@campusconnect.local")
+
+    message = MIMEMultipart("alternative")
+    message["Subject"] = subject
+    message["From"] = from_address
+    message["To"] = to_address
+    message.attach(MIMEText(html_body, "html"))
+
+    if not (smtp_host and smtp_user):
+        # Development mode: never crash, just show the message in the console.
+        print("\n===== EMAIL (not sent, SMTP not configured) =====")
+        print(f"To:      {to_address}")
+        print(f"Subject: {subject}")
+        print(html_body)
+        print("==================================================\n")
+        return True
+
+    try:
+        server = smtplib.SMTP(smtp_host, smtp_port, timeout=15)
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.sendmail(from_address, [to_address], message.as_string())
+        server.quit()
+        return True
+    except Exception as error:
+        print(f"Email send failed: {error}")
+        return False
+
+
+def send_verification_email(user_id, email, full_name):
+    """Create a verify-email token and email the link to the student."""
+    token = create_auth_token(user_id, "verify_email")
+    verify_url = url_for("verify_email", token=token, _external=True)
+    html = (
+        f"<h2>Welcome to IVY, {full_name}!</h2>"
+        "<p>Please confirm your email address to unlock posting, commenting, "
+        "friending, and messaging.</p>"
+        f'<p><a href="{verify_url}">Confirm my email</a></p>'
+        f"<p style='color:#64748b'>If the button does not work, paste this link: "
+        f"<br>{verify_url}</p>"
+    )
+    return send_email(email, "IVY — Confirm your email", html)
+
+
+def send_password_reset_email(user_id, email):
+    """Create a password-reset token and email the reset link to the student."""
+    token = create_auth_token(user_id, "password_reset")
+    reset_url = url_for("reset_password", token=token, _external=True)
+    html = (
+        "<h2>Reset your IVY password</h2>"
+        "<p>Click the link below to choose a new password. This link expires "
+        "in one hour.</p>"
+        f'<p><a href="{reset_url}">Reset my password</a></p>'
+        f"<p style='color:#64748b'>If the button does not work, paste this link: "
+        f"<br>{reset_url}</p>"
+    )
+    return send_email(email, "IVY — Reset your password", html)
+
+
+# ── One-time auth tokens ────────────────────────────────────────────────────
+def create_auth_token(user_id, token_type, ttl_hours=24):
+    """Store and return a fresh single-use token for a user."""
+    token = secrets.token_urlsafe(48)
+    expires_at = datetime.now() + timedelta(hours=ttl_hours)
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            INSERT INTO auth_tokens (user_id, token, token_type, expires_at)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (user_id, token, token_type, expires_at),
+        )
+        connection.commit()
+    finally:
+        if "cursor" in locals():
+            cursor.close()
+        connection.close()
+    return token
+
+
+def consume_auth_token(token, token_type):
+    """Return the user id for a valid, unused, unexpired token, or None."""
+    connection = get_db_connection()
+    try:
+        cursor = db_cursor(connection, dictionary=True)
+        cursor.execute(
+            """
+            SELECT auth_tokens.user_id, auth_tokens.expires_at, auth_tokens.used_at,
+                   users.is_verified, users.is_admin
+            FROM auth_tokens
+            INNER JOIN users ON users.id = auth_tokens.user_id
+            WHERE auth_tokens.token = %s AND auth_tokens.token_type = %s
+            """,
+            (token, token_type),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        if row["used_at"] or row["expires_at"] < datetime.now():
+            return None
+        cursor.execute("UPDATE auth_tokens SET used_at = CURRENT_TIMESTAMP WHERE token = %s", (token,))
+        connection.commit()
+        return row
+    except Error:
+        return None
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+
+# ── Image compression (downscale before upload) ─────────────────────────────
+def compress_image_bytes(file_storage, max_dimension=1600):
+    """Downscale and re-encode an uploaded image, returning new bytes + mime."""
+    try:
+        file_storage.stream.seek(0)
+        image = Image.open(file_storage.stream)
+        format_name = (image.format or "JPEG").upper()
+        image = image.convert("RGB") if format_name in ("PNG", "JPEG", "JPG", "GIF") else image
+        image = image.convert("RGBA") if image.mode in ("P", "LA") else image
+        image.thumbnail((max_dimension, max_dimension), Image.LANCZOS)
+        buffer = io.BytesIO()
+        save_format = "PNG" if image.mode == "RGBA" else "JPEG"
+        if save_format == "JPEG":
+            image = image.convert("RGB")
+            image.save(buffer, format="JPEG", quality=82, optimize=True)
+        else:
+            image.save(buffer, format="PNG", optimize=True)
+        buffer.seek(0)
+        return buffer.read(), ("image/png" if save_format == "PNG" else "image/jpeg")
+    except Exception:
+        file_storage.stream.seek(0)
+        return file_storage.read(), (file_storage.mimetype or "application/octet-stream")
+
+
+# ── Live presence ───────────────────────────────────────────────────────────
+ONLINE_USERS = set()
+ONLINE_LOCK = threading.Lock()
+SOCKET_USER = {}
+
+
+def mark_user_online(user_id):
+    with ONLINE_LOCK:
+        ONLINE_USERS.add(user_id)
+
+
+def mark_user_offline(user_id):
+    with ONLINE_LOCK:
+        ONLINE_USERS.discard(user_id)
+
+
+def is_user_online(user_id):
+    return user_id in ONLINE_USERS
+
+
+@app.context_processor
+def inject_presence():
+    def is_online(user_id):
+        return is_user_online(user_id)
+    return {"is_online": is_online}
+
+
+# ── Verification / admin helpers ────────────────────────────────────────────
+def update_last_seen(user_id):
+    """Persist the last-seen timestamp for a user."""
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE users SET last_seen = CURRENT_TIMESTAMP WHERE id = %s",
+            (user_id,),
+        )
+        connection.commit()
+    except Error:
+        pass
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+
+def verification_required():
+    """Return True if the logged-in user may create content (email verified)."""
+    if "is_verified" in session and session["is_verified"]:
+        return True
+    try:
+        connection = get_db_connection()
+        cursor = db_cursor(connection, dictionary=True)
+        cursor.execute("SELECT is_verified, is_admin FROM users WHERE id = %s", (session.get("user_id"),))
+        row = cursor.fetchone()
+        if row:
+            session["is_verified"] = row["is_verified"]
+            session["is_admin"] = row["is_admin"]
+            return bool(row["is_verified"])
+        return False
+    except Error:
+        return False
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+
+@app.context_processor
+def inject_user_flags():
+    def flag_is_admin():
+        if "is_admin" in session:
+            return session["is_admin"]
+        verification_required()
+        return session.get("is_admin", False)
+    return {"is_admin_user": flag_is_admin}
+
+
+@app.context_processor
+def inject_verification_state():
+    def user_needs_verification():
+        if "is_verified" in session:
+            return not session["is_verified"]
+        return verification_required() is False
+    return {"needs_verification": user_needs_verification}
 
 
 @app.route("/")
@@ -206,12 +526,16 @@ def register():
                 """
                 INSERT INTO users (full_name, email, password, department, study_year, bio)
                 VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
                 """,
                 (full_name, email, hashed_password, department, year, bio),
             )
+            new_user = cursor.fetchone()
 
             connection.commit()
-            flash("Account created successfully. Please login.")
+
+            send_verification_email(new_user["id"], email, full_name)
+            flash("Account created successfully. A confirmation email has been sent to verify your account. Please check your inbox.")
             return redirect(url_for("login"))
 
         except Error as error:
@@ -242,10 +566,21 @@ def login():
             cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
 
-            if user and check_password_hash(user["password"], password):
+            if not user:
+                flash("No account found with this email. Please register first.")
+                return redirect(url_for("login"))
+
+            if not user["password"]:
+                flash("This account uses Google Sign-In. Please use the Continue with Google button.")
+                return redirect(url_for("login"))
+
+            if check_password_hash(user["password"], password):
                 session["user_id"] = user["id"]
                 session["full_name"] = user["full_name"]
                 session["email"] = user["email"]
+                session["is_verified"] = user["is_verified"]
+                session["is_admin"] = user["is_admin"]
+                update_last_seen(user["id"])
 
                 flash("Login successful. Welcome back!")
                 return redirect(url_for("feed"))
@@ -269,9 +604,492 @@ def login():
 @app.route("/logout")
 def logout():
     """Log the current student out by clearing their session."""
+    mark_user_offline(session.get("user_id"))
     session.clear()
     flash("You have been logged out.")
     return redirect(url_for("login"))
+
+
+# ── Email verification ──────────────────────────────────────────────────────
+@app.route("/verify-email/<token>")
+def verify_email(token):
+    """Confirm a student's email address using a one-time link."""
+    record = consume_auth_token(token, "verify_email")
+    if not record:
+        flash("This verification link is invalid or has expired. Please request a new one after logging in.")
+        return redirect(url_for("login"))
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE users SET is_verified = TRUE WHERE id = %s",
+            (record["user_id"],),
+        )
+        connection.commit()
+    except Error as error:
+        flash(f"Database error: {error}")
+        return redirect(url_for("login"))
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    session["is_verified"] = True
+    flash("Your email has been verified. You can now post, comment, and connect with peers.")
+    return redirect(url_for("feed"))
+
+
+@app.route("/resend-verification", methods=["POST"])
+def resend_verification():
+    """Send a fresh verification link to the logged-in student."""
+    if not login_required():
+        flash("Please login to resend the verification email.")
+        return redirect(url_for("login"))
+
+    email = session.get("email")
+    full_name = session.get("full_name")
+    send_verification_email(session["user_id"], email, full_name)
+    flash("A new verification email has been sent. Check your inbox and spam folder.")
+    return redirect(request.referrer or url_for("feed"))
+
+
+# ── Password reset ──────────────────────────────────────────────────────────
+@app.route("/forgot-password", methods=["GET", "POST"])
+def forgot_password():
+    """Show the reset-request form and email a reset link."""
+    if request.method == "POST":
+        email = request.form.get("email")
+        try:
+            connection = get_db_connection()
+            cursor = db_cursor(connection, dictionary=True)
+            cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+        except Error:
+            user = None
+        finally:
+            if "connection" in locals() and not connection.closed:
+                if "cursor" in locals():
+                    cursor.close()
+                connection.close()
+
+        # Always show the same message to avoid revealing whether an email exists.
+        if user:
+            send_password_reset_email(user["id"], email)
+        flash("If that email is registered, a password reset link has been sent.")
+        return redirect(url_for("login"))
+
+    return render_template("forgot_password.html")
+
+
+@app.route("/reset-password/<token>", methods=["GET", "POST"])
+def reset_password(token):
+    """Let a student choose a new password with a valid reset token."""
+    record = consume_auth_token(token, "password_reset")
+    if not record:
+        flash("This reset link is invalid or has expired. Please request a new one.")
+        return redirect(url_for("forgot_password"))
+
+    if request.method == "POST":
+        password = request.form.get("password")
+        confirm = request.form.get("confirm_password")
+        if not password:
+            flash("Please enter a new password.")
+            return render_template("reset_password.html", token=token)
+        if password != confirm:
+            flash("Passwords do not match.")
+            return render_template("reset_password.html", token=token)
+
+        try:
+            connection = get_db_connection()
+            cursor = connection.cursor()
+            cursor.execute(
+                "UPDATE users SET password = %s WHERE id = %s",
+                (generate_password_hash(password), record["user_id"]),
+            )
+            connection.commit()
+            flash("Your password has been updated. Please sign in with your new password.")
+            return redirect(url_for("login"))
+        except Error as error:
+            flash(f"Database error: {error}")
+            return render_template("reset_password.html", token=token)
+        finally:
+            if "connection" in locals() and not connection.closed:
+                if "cursor" in locals():
+                    cursor.close()
+                connection.close()
+
+    return render_template("reset_password.html", token=token)
+
+
+# ── Account deletion ────────────────────────────────────────────────────────
+@app.route("/delete-account", methods=["POST"])
+def delete_account():
+    """Permanently delete the logged-in student's account and content."""
+    if not login_required():
+        flash("Please login first.")
+        return redirect(url_for("login"))
+
+    confirmation = request.form.get("confirmation")
+    if confirmation != "DELETE":
+        flash("Please type DELETE to confirm you want to remove your account.")
+        return redirect(url_for("profile"))
+
+    user_id = session["user_id"]
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+        connection.commit()
+    except Error as error:
+        flash(f"Database error: {error}")
+        return redirect(url_for("profile"))
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    mark_user_offline(user_id)
+    session.clear()
+    flash("Your account and all associated data have been deleted.")
+    return redirect(url_for("index"))
+
+
+# ── Reporting ───────────────────────────────────────────────────────────────
+@app.route("/report", methods=["POST"])
+def report_content():
+    """File a report against a post, comment, resource, or user."""
+    if not login_required():
+        flash("Please login to report content.")
+        return redirect(url_for("login"))
+
+    target_type = request.form.get("target_type")
+    reason = request.form.get("reason")
+    details = request.form.get("details")
+
+    valid_types = {"post", "comment", "user", "resource"}
+    if target_type not in valid_types or not reason:
+        flash("A valid report type and reason are required.")
+        return redirect(request.referrer or url_for("feed"))
+
+    try:
+        target_id = int(request.form.get("target_id"))
+    except (TypeError, ValueError):
+        flash("Invalid report target.")
+        return redirect(request.referrer or url_for("feed"))
+
+    if target_type in ("post", "comment", "user", "resource"):
+        try:
+            table = {"post": "posts", "comment": "comments", "user": "users", "resource": "resources"}[target_type]
+            connection = get_db_connection()
+            cursor = connection.cursor()
+            cursor.execute(f"SELECT 1 FROM {table} WHERE id = %s", (target_id,))
+            if not cursor.fetchone():
+                flash("The content you reported no longer exists.")
+                return redirect(request.referrer or url_for("feed"))
+            cursor.execute(
+                """
+                INSERT INTO reports (reporter_id, target_type, target_id, reason, details)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (session["user_id"], target_type, target_id, reason, details),
+            )
+            connection.commit()
+            flash("Thanks for reporting. Our moderators will review it.")
+        except Error as error:
+            flash(f"Database error: {error}")
+        finally:
+            if "connection" in locals() and not connection.closed:
+                if "cursor" in locals():
+                    cursor.close()
+                connection.close()
+
+    return redirect(request.referrer or url_for("feed"))
+
+
+def admin_required():
+    """Require an authenticated admin; otherwise redirect to the feed."""
+    if not login_required():
+        return False
+    if "is_admin" in session:
+        return session["is_admin"]
+    try:
+        connection = get_db_connection()
+        cursor = db_cursor(connection, dictionary=True)
+        cursor.execute("SELECT is_admin FROM users WHERE id = %s", (session["user_id"],))
+        row = cursor.fetchone()
+        admin = bool(row and row["is_admin"])
+        session["is_admin"] = admin
+        return admin
+    except Error:
+        return False
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+
+@app.route("/admin/reports")
+def admin_reports():
+    """Admin moderation queue of open reports."""
+    if not admin_required():
+        flash("You do not have permission to view reports.")
+        return redirect(url_for("feed"))
+
+    report_list = []
+    try:
+        connection = get_db_connection()
+        cursor = db_cursor(connection, dictionary=True)
+        cursor.execute(
+            """
+            SELECT reports.*, reporter.full_name AS reporter_name, users.full_name AS target_name
+            FROM reports
+            LEFT JOIN users AS reporter ON reporter.id = reports.reporter_id
+            LEFT JOIN users AS users ON users.id =
+                CASE WHEN reports.target_type = 'user' THEN reports.target_id ELSE NULL END
+            WHERE reports.status = 'open'
+            ORDER BY reports.created_at DESC
+            """
+        )
+        report_list = cursor.fetchall()
+    except Error as error:
+        flash(f"Database error: {error}")
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    return render_template("admin_reports.html", reports=report_list, user=get_logged_in_user())
+
+
+@app.route("/admin/resolve/<int:report_id>", methods=["POST"])
+def admin_resolve_report(report_id):
+    """Mark a report resolved or dismissed."""
+    if not admin_required():
+        flash("You do not have permission to do that.")
+        return redirect(url_for("feed"))
+
+    status = request.form.get("status")
+    if status not in ("resolved", "dismissed"):
+        status = "resolved"
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE reports SET status = %s, resolved_at = CURRENT_TIMESTAMP, resolver_id = %s WHERE id = %s",
+            (status, session["user_id"], report_id),
+        )
+        connection.commit()
+        flash("Report updated.")
+    except Error as error:
+        flash(f"Database error: {error}")
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    return redirect(url_for("admin_reports"))
+
+
+@app.route("/admin/delete-target/<string:target_type>/<int:target_id>", methods=["POST"])
+def admin_delete_target(target_type, target_id):
+    """Remove a reported post or comment and resolve the associated reports."""
+    if not admin_required():
+        flash("You do not have permission to do that.")
+        return redirect(url_for("feed"))
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        if target_type == "post":
+            cursor.execute("DELETE FROM posts WHERE id = %s", (target_id,))
+        elif target_type == "comment":
+            cursor.execute("DELETE FROM comments WHERE id = %s", (target_id,))
+        elif target_type == "resource":
+            cursor.execute("DELETE FROM resources WHERE id = %s", (target_id,))
+        elif target_type == "user":
+            cursor.execute("DELETE FROM users WHERE id = %s", (target_id,))
+        else:
+            flash("Invalid target type.")
+            return redirect(url_for("admin_reports"))
+        cursor.execute(
+            "UPDATE reports SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, resolver_id = %s "
+            "WHERE target_type = %s AND target_id = %s AND status = 'open'",
+            (session["user_id"], target_type, target_id),
+        )
+        connection.commit()
+        flash("Reported content removed and reports marked resolved.")
+    except Error as error:
+        flash(f"Database error: {error}")
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    return redirect(url_for("admin_reports"))
+
+
+# ── AI study planner ────────────────────────────────────────────────────────
+@app.route("/ai/study-plan", methods=["POST"])
+def ai_study_plan():
+    """Build a personalised study plan with IVY and save it as a new chat."""
+    if not login_required():
+        return {"ok": False, "error": "Please log in again."}, 401
+
+    payload = request.get_json(silent=True) or {}
+    subject = str(payload.get("subject") or "").strip()
+    weeks = str(payload.get("weeks") or "").strip()
+    hours = str(payload.get("hours") or "").strip()
+
+    if len(subject) > 200 or len(weeks) > 10 or len(hours) > 10:
+        return {"ok": False, "error": "Please keep your details short."}, 400
+
+    user_request = f"Subject: {subject}, weeks until exam: {weeks}, hours available: {hours}"
+    system_prompt = (
+        "You are IVY, a study planner for university students. Create a clear, "
+        "practical weekly study plan in markdown. Break the subject into topics, "
+        "order them by difficulty, suggest weekly goals, and include how to split "
+        "the available hours each week. Keep it concrete and motivating."
+    )
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    prompt = build_ai_chat_prompt([], user_request)
+    try:
+        client = Groq(api_key=api_key)
+        configured_model = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+        reply_text = generate_ai_response(client, system_prompt + "\n\n" + user_request, configured_model)
+    except Exception as error:
+        print(f"Study planner error: {error}")
+        return {"ok": False, "error": "The study planner is temporarily unavailable."}, 502
+
+    if not reply_text:
+        return {"ok": False, "error": "The study planner could not generate a plan."}, 502
+
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor()
+        title = f"Study plan: {subject[:48]}" if subject else "Study plan"
+        cursor.execute(
+            "INSERT INTO ai_conversations (user_id, title) VALUES (%s, %s) RETURNING id",
+            (session["user_id"], title),
+        )
+        conversation_id = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO ai_messages (conversation_id, role, content) VALUES (%s, 'user', %s)",
+            (conversation_id, user_request),
+        )
+        cursor.execute(
+            "INSERT INTO ai_messages (conversation_id, role, content) VALUES (%s, 'assistant', %s)",
+            (conversation_id, reply_text),
+        )
+        connection.commit()
+        return {"ok": True, "conversation_id": conversation_id, "title": title, "plan": reply_text}
+    except Error as error:
+        print(f"Study planner persistence error: {error}")
+        return {"ok": False, "error": "Your plan could not be saved."}, 500
+    finally:
+        if connection and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+
+@app.route("/login/google")
+def login_google():
+    """Send the student to Google's consent screen to sign in."""
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        flash("Google Sign-In is not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.")
+        return redirect(url_for("login"))
+
+    redirect_uri = url_for("google_callback", _external=True)
+    return oauth.google.authorize_redirect(redirect_uri)
+
+
+@app.route("/login/google/callback")
+def google_callback():
+    """Handle Google's response and log the student in."""
+    try:
+        token = oauth.google.authorize_access_token()
+        userinfo = oauth.google.userinfo(token=token)
+    except Exception:
+        flash("Google Sign-In could not be completed. Please try again.")
+        return redirect(url_for("login"))
+
+    if not userinfo or not userinfo.get("email"):
+        flash("Google Sign-In failed. Please try again.")
+        return redirect(url_for("login"))
+
+    google_id = str(userinfo.get("sub") or "")
+    email = userinfo["email"]
+    full_name = userinfo.get("name") or email.split("@")[0]
+    picture = userinfo.get("picture") or None
+
+    try:
+        connection = get_db_connection()
+        cursor = db_cursor(connection, dictionary=True)
+
+        cursor.execute(
+            """
+            SELECT id, full_name, email FROM users
+            WHERE email = %s OR (google_id IS NOT NULL AND google_id = %s)
+            LIMIT 1
+            """,
+            (email, google_id),
+        )
+        user = cursor.fetchone()
+
+        if user:
+            # Link the Google id so future sign-ins always find this account.
+            cursor.execute(
+                "UPDATE users SET google_id = %s, is_verified = TRUE WHERE id = %s",
+                (google_id, user["id"]),
+            )
+        else:
+            # First-time Google student: create their account automatically.
+            # Google already verified their email address, so the account is
+            # marked verified from the start.
+            cursor.execute(
+                """
+                INSERT INTO users
+                    (full_name, email, password, auth_provider, google_id,
+                     department, study_year, profile_picture, is_verified)
+                VALUES (%s, %s, NULL, 'google', %s, NULL, NULL, %s, TRUE)
+                RETURNING id, full_name, email
+                """,
+                (full_name, email, google_id, picture),
+            )
+            user = cursor.fetchone()
+
+        connection.commit()
+
+        session["user_id"] = user["id"]
+        session["full_name"] = user["full_name"]
+        session["email"] = user["email"]
+        session["is_verified"] = True
+        cursor.execute("SELECT is_admin FROM users WHERE id = %s", (user["id"],))
+        admin_row = cursor.fetchone()
+        session["is_admin"] = admin_row["is_admin"] if admin_row else False
+        update_last_seen(user["id"])
+
+        flash("Signed in with Google. Welcome back!")
+        return redirect(url_for("feed"))
+
+    except Error as error:
+        flash(f"Database error: {error}")
+        return redirect(url_for("login"))
+
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
 
 
 @app.route("/feed")
@@ -361,6 +1179,9 @@ def create_post():
     if not login_required():
         flash("Please login before creating a post.")
         return redirect(url_for("login"))
+    if not verification_required():
+        flash("Please verify your email before creating posts.")
+        return redirect(url_for("feed"))
 
     content = request.form.get("content")
     post_type = request.form.get("post_type")
@@ -556,6 +1377,9 @@ def add_comment(post_id):
     if not login_required():
         flash("Please login before commenting.")
         return redirect(url_for("login"))
+    if not verification_required():
+        flash("Please verify your email before commenting.")
+        return redirect(url_for("feed"))
 
     comment_text = request.form.get("comment_text")
 
@@ -746,6 +1570,151 @@ def profile():
     return render_template("profile.html", profile_user=profile_user, stats=stats, user=get_logged_in_user())
 
 
+@app.route("/profile/<int:user_id>")
+def public_profile(user_id):
+    """Show another student's public profile."""
+    if not login_required():
+        flash("Please login to view profiles.")
+        return redirect(url_for("login"))
+
+    if user_id == session["user_id"]:
+        return redirect(url_for("profile"))
+
+    profile_user = None
+    stats = {"followers": 0, "following": 0, "friends": 0}
+    relationship = {"is_following": False, "friend_status": None, "friend_request_id": None}
+    posts = []
+    comments_by_post = {}
+
+    try:
+        connection = get_db_connection()
+        cursor = db_cursor(connection, dictionary=True)
+
+        cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+        profile_user = cursor.fetchone()
+        if not profile_user:
+            flash("That student could not be found.")
+            return redirect(url_for("students"))
+
+        # These SELECT queries count followers, following, and accepted friends.
+        cursor.execute("SELECT COUNT(*) AS total FROM followers WHERE following_id = %s", (user_id,))
+        stats["followers"] = cursor.fetchone()["total"]
+
+        cursor.execute("SELECT COUNT(*) AS total FROM followers WHERE follower_id = %s", (user_id,))
+        stats["following"] = cursor.fetchone()["total"]
+
+        cursor.execute(
+            """
+            SELECT COUNT(*) AS total
+            FROM friends
+            WHERE status = 'accepted'
+            AND (sender_id = %s OR receiver_id = %s)
+            """,
+            (user_id, user_id),
+        )
+        stats["friends"] = cursor.fetchone()["total"]
+
+        # These queries describe how the logged-in student relates to this user.
+        cursor.execute(
+            "SELECT 1 FROM followers WHERE follower_id = %s AND following_id = %s",
+            (session["user_id"], user_id),
+        )
+        relationship["is_following"] = cursor.fetchone() is not None
+
+        cursor.execute(
+            """
+            SELECT id, sender_id, status
+            FROM friends
+            WHERE status IN ('pending', 'accepted')
+            AND ((sender_id = %s AND receiver_id = %s) OR (sender_id = %s AND receiver_id = %s))
+            """,
+            (session["user_id"], user_id, user_id, session["user_id"]),
+        )
+        friend_row = cursor.fetchone()
+        if friend_row:
+            if friend_row["status"] == "accepted":
+                relationship["friend_status"] = "accepted"
+            elif friend_row["sender_id"] == session["user_id"]:
+                relationship["friend_status"] = "request_sent"
+            else:
+                relationship["friend_status"] = "request_received"
+            relationship["friend_request_id"] = friend_row["id"]
+
+        # This SELECT query loads the student's recent posts with counts.
+        cursor.execute(
+            """
+            SELECT
+                posts.id,
+                posts.user_id,
+                posts.content,
+                posts.post_type,
+                posts.file_path,
+                posts.file_type,
+                posts.created_at,
+                (SELECT COUNT(*) FROM likes WHERE likes.post_id = posts.id) AS like_count,
+                (SELECT COUNT(*) FROM comments WHERE comments.post_id = posts.id) AS comment_count,
+                (
+                    SELECT COUNT(*)
+                    FROM likes
+                    WHERE likes.post_id = posts.id
+                    AND likes.user_id = %s
+                ) AS liked_by_user
+            FROM posts
+            WHERE posts.user_id = %s
+            ORDER BY posts.created_at DESC
+            LIMIT 20
+            """,
+            (session["user_id"], user_id),
+        )
+        posts = cursor.fetchall()
+
+        # This SELECT query loads comments attached to those recent posts.
+        if posts:
+            post_ids = tuple(post["id"] for post in posts)
+            cursor.execute(
+                """
+                SELECT
+                    comments.id,
+                    comments.post_id,
+                    comments.user_id,
+                    comments.comment_text,
+                    comments.created_at,
+                    users.full_name
+                FROM comments
+                INNER JOIN users ON comments.user_id = users.id
+                WHERE comments.post_id IN %s
+                ORDER BY comments.created_at ASC
+                """,
+                (post_ids,),
+            )
+            comments = cursor.fetchall()
+            for comment in comments:
+                comments_by_post.setdefault(comment["post_id"], []).append(comment)
+
+    except Error as error:
+        flash(f"Database error: {error}")
+        profile_user = None
+
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    if not profile_user:
+        return redirect(url_for("students"))
+
+    return render_template(
+        "public_profile.html",
+        profile_user=profile_user,
+        stats=stats,
+        relationship=relationship,
+        posts=posts,
+        comments_by_post=comments_by_post,
+        user=get_logged_in_user(),
+    )
+
+
 @app.route("/students")
 def students():
     """Show students so the logged-in user can friend or follow them."""
@@ -767,7 +1736,7 @@ def students():
         # This SELECT query loads friend requests waiting for the logged-in student.
         cursor.execute(
             """
-            SELECT friends.id, users.full_name, users.department, users.study_year
+            SELECT friends.id, users.id AS user_id, users.full_name, users.department, users.study_year
             FROM friends
             INNER JOIN users ON friends.sender_id = users.id
             WHERE friends.receiver_id = %s AND friends.status = 'pending'
@@ -794,10 +1763,13 @@ def send_friend_request(receiver_id):
     if not login_required():
         flash("Please login first.")
         return redirect(url_for("login"))
+    if not verification_required():
+        flash("Please verify your email before sending friend requests.")
+        return redirect(url_for("students"))
 
     if receiver_id == session["user_id"]:
         flash("You cannot send a request to yourself.")
-        return redirect(url_for("students"))
+        return redirect_back("students")
 
     try:
         connection = get_db_connection()
@@ -826,7 +1798,7 @@ def send_friend_request(receiver_id):
                 cursor.close()
             connection.close()
 
-    return redirect(url_for("students"))
+    return redirect_back("students")
 
 
 @app.route("/respond-friend-request/<int:friend_id>/<status>", methods=["POST"])
@@ -838,7 +1810,7 @@ def respond_friend_request(friend_id, status):
 
     if status not in ["accepted", "rejected"]:
         flash("Invalid friend request action.")
-        return redirect(url_for("students"))
+        return redirect_back("students")
 
     try:
         connection = get_db_connection()
@@ -874,7 +1846,7 @@ def respond_friend_request(friend_id, status):
                 cursor.close()
             connection.close()
 
-    return redirect(url_for("students"))
+    return redirect_back("students")
 
 
 @app.route("/remove-friend/<int:friend_id>", methods=["POST"])
@@ -911,7 +1883,7 @@ def remove_friend(friend_id):
                 cursor.close()
             connection.close()
 
-    return redirect(url_for("students"))
+    return redirect_back("students")
 
 
 @app.route("/follow/<int:following_id>", methods=["POST"])
@@ -920,10 +1892,13 @@ def follow(following_id):
     if not login_required():
         flash("Please login first.")
         return redirect(url_for("login"))
+    if not verification_required():
+        flash("Please verify your email before following students.")
+        return redirect(url_for("students"))
 
     if following_id == session["user_id"]:
         flash("You cannot follow yourself.")
-        return redirect(url_for("students"))
+        return redirect_back("students")
 
     try:
         connection = get_db_connection()
@@ -952,7 +1927,7 @@ def follow(following_id):
                 cursor.close()
             connection.close()
 
-    return redirect(url_for("students"))
+    return redirect_back("students")
 
 
 @app.route("/unfollow/<int:following_id>", methods=["POST"])
@@ -984,7 +1959,7 @@ def unfollow(following_id):
                 cursor.close()
             connection.close()
 
-    return redirect(url_for("students"))
+    return redirect_back("students")
 
 
 @app.route("/messages")
@@ -1051,11 +2026,18 @@ def messages(conversation_id=None):
                            WHERE cp2.conversation_id = c.id AND u.id != %s
                            LIMIT 1
                        ) AS other_user_department,
+                       (
+                           SELECT u.id
+                           FROM users u
+                           JOIN conversation_participants cp2 ON cp2.user_id = u.id
+                           WHERE cp2.conversation_id = c.id AND u.id != %s
+                           LIMIT 1
+                       ) AS other_user_id,
                        (SELECT u.full_name FROM users u WHERE u.id = c.created_by) AS creator_name
                 FROM conversations c
                 WHERE c.id = %s
                 """,
-                (session["user_id"], session["user_id"], conversation_id),
+                (session["user_id"], session["user_id"], session["user_id"], conversation_id),
             )
             selected_conversation = cursor.fetchone()
 
@@ -1131,6 +2113,13 @@ def messages(conversation_id=None):
                        WHERE cp2.conversation_id = c.id AND u.id != %s
                        LIMIT 1
                    ) AS other_user_picture,
+                   (
+                       SELECT u.id
+                       FROM users u
+                       JOIN conversation_participants cp2 ON cp2.user_id = u.id
+                       WHERE cp2.conversation_id = c.id AND u.id != %s
+                       LIMIT 1
+                   ) AS other_user_id,
                    (SELECT m.message_text FROM messages m WHERE m.conversation_id = c.id
                     ORDER BY m.created_at DESC, m.id DESC LIMIT 1) AS last_message,
                    (SELECT m.message_type FROM messages m WHERE m.conversation_id = c.id
@@ -1144,7 +2133,7 @@ def messages(conversation_id=None):
             WHERE cp.user_id = %s
             ORDER BY c.updated_at DESC, c.id DESC
             """,
-            (session["user_id"], session["user_id"], session["user_id"], session["user_id"]),
+            (session["user_id"], session["user_id"], session["user_id"], session["user_id"], session["user_id"]),
         )
         conversations = cursor.fetchall()
 
@@ -1175,6 +2164,9 @@ def new_conversation():
     if not login_required():
         flash("Please login to send messages.")
         return redirect(url_for("login"))
+    if not verification_required():
+        flash("Please verify your email before starting chats.")
+        return redirect(url_for("messages"))
 
     target_user_id = request.form.get("user_id", type=int)
     if not target_user_id or target_user_id == session["user_id"]:
@@ -1239,6 +2231,9 @@ def create_group_conversation():
     if not login_required():
         flash("Please login to create a group.")
         return redirect(url_for("login"))
+    if not verification_required():
+        flash("Please verify your email before creating groups.")
+        return redirect(url_for("messages"))
 
     title = (request.form.get("title") or "").strip()
     member_ids = {member_id for member_id in request.form.getlist("member_ids", type=int)
@@ -1501,9 +2496,13 @@ def join_chat(data):
 
 @socketio.on("join_inbox")
 def join_inbox():
-    """Join the current user's private inbox room for live unread indicators."""
+    """Join the current user's private inbox room and mark them online."""
     if login_required():
         join_room(f"user_{session['user_id']}")
+        user_id = session["user_id"]
+        SOCKET_USER[request.sid] = user_id
+        mark_user_online(user_id)
+        update_last_seen(user_id)
 
 
 @socketio.on("send_chat_message")
@@ -1738,6 +2737,9 @@ def start_call_room(conversation_id):
     if not login_required():
         flash("Please login before starting a call.")
         return redirect(url_for("login"))
+    if not verification_required():
+        flash("Please verify your email before starting a video call.")
+        return redirect(url_for("messages"))
 
     if not user_is_conversation_member(session["user_id"], conversation_id):
         flash("You can only start calls in your own conversations.")
@@ -2123,6 +3125,9 @@ def handle_call_disconnect():
     """Clean up presence when any socket disappears without a goodbye."""
     for room_id in list(CALL_ROOM_SOCKETS.keys()):
         release_call_socket(room_id, request.sid)
+    user_id = SOCKET_USER.pop(request.sid, None)
+    if user_id is not None and user_id not in SOCKET_USER.values():
+        mark_user_offline(user_id)
 
 
 def save_and_emit_call_ivy_message(room_id, conversation_id, message_text):
@@ -2305,12 +3310,65 @@ def notifications():
     return render_template("notifications.html", notifications=notification_list, user=get_logged_in_user())
 
 
+@app.route("/notifications/delete/<int:notification_id>", methods=["POST"])
+def delete_notification(notification_id):
+    """Remove a single notification belonging to the logged-in student."""
+    if not login_required():
+        flash("Please login first.")
+        return redirect(url_for("login"))
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            "DELETE FROM notifications WHERE id = %s AND user_id = %s",
+            (notification_id, session["user_id"]),
+        )
+        connection.commit()
+    except Error as error:
+        flash(f"Database error: {error}")
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    return redirect(url_for("notifications"))
+
+
+@app.route("/notifications/clear-all", methods=["POST"])
+def clear_all_notifications():
+    """Delete every notification belonging to the logged-in student."""
+    if not login_required():
+        flash("Please login first.")
+        return redirect(url_for("login"))
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+        cursor.execute("DELETE FROM notifications WHERE user_id = %s", (session["user_id"],))
+        connection.commit()
+        flash("All notifications cleared.")
+    except Error as error:
+        flash(f"Database error: {error}")
+    finally:
+        if "connection" in locals() and not connection.closed:
+            if "cursor" in locals():
+                cursor.close()
+            connection.close()
+
+    return redirect(url_for("notifications"))
+
+
 @app.route("/resources", methods=["GET", "POST"])
 def resources():
     """Upload and list shared learning resources."""
     if not login_required():
         flash("Please login to view resources.")
         return redirect(url_for("login"))
+    if request.method == "POST" and not verification_required():
+        flash("Please verify your email before sharing resources.")
+        return redirect(url_for("resources"))
 
     if request.method == "POST":
         title = request.form.get("title")

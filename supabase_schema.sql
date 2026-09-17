@@ -11,14 +11,19 @@ CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     full_name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
-    department TEXT NOT NULL,
-    study_year TEXT NOT NULL,
+    password TEXT,
+    auth_provider TEXT NOT NULL DEFAULT 'password',
+    google_id TEXT UNIQUE,
+    department TEXT,
+    study_year TEXT,
     bio TEXT,
     skills TEXT,
     interests TEXT,
     profile_picture TEXT DEFAULT 'default_profile.png',
     cover_photo TEXT DEFAULT 'default_cover.jpg',
+    is_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+    last_seen TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -245,6 +250,41 @@ DROP TRIGGER IF EXISTS trg_ai_conversations_updated_at ON ai_conversations;
 CREATE TRIGGER trg_ai_conversations_updated_at
     BEFORE UPDATE ON ai_conversations
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- Single-use tokens issued when a student asks to verify their email or reset
+-- their password. Expiry is enforced in application code as well.
+CREATE TABLE IF NOT EXISTS auth_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    token_type TEXT NOT NULL CHECK (token_type IN ('verify_email', 'password_reset')),
+    expires_at TIMESTAMP NOT NULL,
+    used_at TIMESTAMP NULL DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_tokens_user_type
+    ON auth_tokens (user_id, token_type);
+
+-- One report row per reported piece of content.
+CREATE TABLE IF NOT EXISTS reports (
+    id SERIAL PRIMARY KEY,
+    reporter_id INT NOT NULL,
+    target_type TEXT NOT NULL CHECK (target_type IN ('post', 'comment', 'user', 'resource')),
+    target_id INT NOT NULL,
+    reason TEXT NOT NULL,
+    details TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP NULL DEFAULT NULL,
+    resolver_id INT,
+    FOREIGN KEY (reporter_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (resolver_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_reports_status
+    ON reports (status, created_at);
 
 -- Storage buckets to create manually in the Supabase dashboard
 -- (Storage → New bucket → allow public access):

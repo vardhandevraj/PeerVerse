@@ -60,7 +60,7 @@
                 {% for student in students %}
                     <div class="student-row">
                         <div>
-                            <strong>{{ student.full_name }}</strong>
+                            <a class="student-name-link" href="{{ url_for('public_profile', user_id=student.id) }}">{{ student.full_name }}</a>
                             <p>{{ student.department }} · {{ student.study_year }}</p>
                         </div>
                     </div>
@@ -74,7 +74,7 @@
                 {% for post in posts %}
                     <div class="student-row">
                         <div>
-                            <strong>{{ post.full_name }}</strong>
+                            <a class="student-name-link" href="{{ url_for('public_profile', user_id=post.user_id) }}">{{ post.full_name }}</a>
                             <p>{{ post.content }}</p>
                         </div>
                     </div>
@@ -90,6 +90,10 @@
                         <div>
                             <strong>{{ resource.title }}</strong>
                             <p>{{ resource.description }}</p>
+                            <p class="muted-text">
+                                Shared by
+                                <a class="student-name-link" href="{{ url_for('public_profile', user_id=resource.user_id) }}">{{ resource.full_name }}</a>
+                            </p>
                         </div>
                     </div>
                 {% else %}

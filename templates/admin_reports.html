@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Moderation | IVY</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("ivy-theme") || (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <header class="topbar">
+        <a class="brand" href="{{ url_for('feed') }}">
+            <img class="brand-logo" src="{{ url_for('static', filename='images/logo.png') }}" alt="IVY">
+        </a>
+
+        <nav class="nav-links" id="navLinks">
+            <a href="{{ url_for('feed') }}">Feed</a>
+            <a href="{{ url_for('profile') }}">Profile</a>
+            <a href="{{ url_for('students') }}">Students</a>
+            <a href="{{ url_for('messages') }}">Messages</a>
+            <a href="{{ url_for('notifications') }}">Notifications</a>
+            <a href="{{ url_for('resources') }}">Resources</a>
+            <a href="{{ url_for('search') }}">Search</a>
+            <a href="{{ url_for('ai_assistant') }}">AI</a>
+            <a href="{{ url_for('admin_reports') }}" class="active">Moderation</a>
+            <a href="{{ url_for('logout') }}">Sign Out</a>
+        </nav>
+
+        <div class="topbar-actions">
+            <button id="themeToggle" class="theme-toggle-btn" aria-label="Toggle theme" title="Toggle theme">
+                <svg class="sun-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                <svg class="moon-icon" xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+            <button class="menu-button" id="menuButton" aria-label="Toggle menu">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </header>
+
+    <main class="dashboard-page">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-message">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="section-heading">
+            <h1>Moderation Queue</h1>
+            <p>Review community reports and take action on content that violates IVY guidelines.</p>
+        </section>
+
+        <section class="dashboard-grid">
+            <article class="dashboard-card">
+                <h2>Open Reports ({{ reports|length }})</h2>
+                {% if reports %}
+                    {% for report in reports %}
+                        <div class="admin-report">
+                            <div class="admin-report-header">
+                                <span class="report-badge report-type-{{ report.target_type }}">{{ report.target_type }}</span>
+                                <strong>{{ report.reason }}</strong>
+                                <time datetime="{{ report.created_at.isoformat() }}">{{ report.created_at.strftime('%d %b %Y') }}</time>
+                            </div>
+                            <p class="muted-text">
+                                Reported by <strong>{{ report.reporter_name }}</strong>
+                                {% if report.target_type == 'user' %}
+                                    against <strong>{{ report.target_name }}</strong> (#{{ report.target_id }})
+                                {% else %}
+                                    on #{{ report.target_id }}
+                                {% endif %}
+                            </p>
+                            {% if report.details %}
+                                <p class="report-details">“{{ report.details }}”</p>
+                            {% endif %}
+                            <div class="row-actions">
+                                <form action="{{ url_for('admin_resolve_report', report_id=report.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="status" value="resolved">
+                                    <button class="small-action-button" type="submit">Mark Resolved</button>
+                                </form>
+                                <form action="{{ url_for('admin_resolve_report', report_id=report.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="status" value="dismissed">
+                                    <button class="small-action-button light-button" type="submit">Dismiss</button>
+                                </form>
+                                {% if report.target_type in ['post', 'comment', 'resource', 'user'] %}
+                                    <form action="{{ url_for('admin_delete_target', target_type=report.target_type, target_id=report.target_id) }}" method="POST"
+                                        onsubmit="return confirm('Permanently delete this {{ report.target_type }}? This cannot be undone.');">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button class="small-action-button danger-button" type="submit">Delete Content</button>
+                                    </form>
+                                {% endif %}
+                            </div>
+                        </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="muted-text">All clear — no open reports.</p>
+                {% endif %}
+            </article>
+        </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

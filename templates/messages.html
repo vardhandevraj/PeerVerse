@@ -141,14 +141,18 @@
                         src="{{ media_url(selected_conversation.avatar_path) }}" alt="">{% else %}<span>{{
                         selected_conversation.display_name[:1]|upper }}</span>{% endif %}</div>
                 <div class="conversation-title-block">
-                    <h2>{{ selected_conversation.display_name }}</h2>{% if selected_conversation.is_group %}<p>{{
+                    <h2>{% if not selected_conversation.is_group and selected_conversation.other_user_id %}<a
+                            class="student-name-link"
+                            href="{{ url_for('public_profile', user_id=selected_conversation.other_user_id) }}">{{
+                            selected_conversation.display_name }}</a>{% else %}{{ selected_conversation.display_name }}{%
+                        endif %}</h2>{% if selected_conversation.is_group %}<p>{{
                         selected_members|length }} members · Created {{ selected_conversation.created_at.strftime('%d %b
                         %Y') }}</p>{% else %}<p>Peer learning chat{% if selected_conversation.other_user_department %} ·
                         {{ selected_conversation.other_user_department }}{% endif %}</p>{% endif %}
                 </div>
                 <div class="conversation-header-actions" style="display: flex; gap: 8px; align-items: center;">
                     <form action="{{ url_for('start_call_room', conversation_id=selected_conversation.id) }}"
-                        method="POST">
+                        method="POST"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button id="startCallBtn" class="icon-action" type="submit"
                             aria-label="Start learning room call" title="Start learning room call"
                             style="background: none; border: none; cursor: pointer; color: inherit; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 6px;">
@@ -188,13 +192,18 @@
                 {% set is_ivy = message.message_type == 'ai' or message.sender_id == None %}
                 <article
                     class="message-row {% if message.sender_id == user.id %}is-own{% endif %} {% if is_ivy %}is-ivy{% endif %}">
-                    {% if message.sender_id != user.id %}<div
-                        class="message-avatar {% if is_ivy %}ivy-avatar{% endif %}">{{ '✦' if is_ivy else
-                        message.sender_name[:1]|upper }}</div>{% endif %}
+                    {% if message.sender_id != user.id %}{% if not is_ivy %}<a
+                        class="message-avatar" href="{{ url_for('public_profile', user_id=message.sender_id) }}"
+                        title="View {{ message.sender_name }}'s profile">{{ message.sender_name[:1]|upper }}</a>{% else
+                        %}<div class="message-avatar ivy-avatar">✦</div>{% endif %}{% endif %}
                     <div class="message-stack">
-                        <div class="message-sender-line"><strong>{{ 'IVY' if is_ivy else message.sender_name
-                                }}</strong>{% if is_ivy %}<span class="ivy-badge">AI learning assistant</span>{% endif
-                            %}<time datetime="{{ message.created_at.isoformat() if message.created_at else '' }}">{{
+                        <div class="message-sender-line">{% if is_ivy %}<strong>IVY</strong>{% elif
+                            message.sender_id and message.sender_id != user.id %}<strong><a
+                                class="student-name-link" href="{{ url_for('public_profile',
+                                user_id=message.sender_id) }}">{{ message.sender_name }}</a></strong>{% else
+                            %}<strong>{{ message.sender_name }}</strong>{% endif %}{% if is_ivy %}<span
+                                class="ivy-badge">AI learning assistant</span>{% endif %}<time
+                                datetime="{{ message.created_at.isoformat() if message.created_at else '' }}">{{
                                 message.created_at.strftime('%H:%M') if message.created_at else '' }}</time></div>
                         <div class="message-bubble {% if is_ivy %}ivy-message{% endif %}">
                             <div class="message-content" {% if is_ivy %}data-markdown="true" {% endif %}>{{
@@ -255,7 +264,8 @@
             <h2 id="newChatTitle">Start a new chat</h2>
             <p class="modal-description">Search for a student. If you already have a chat together, PeerVerse will open
                 it instead.</p>
-            <form action="{{ url_for('new_conversation') }}" method="POST"><label class="field-label"
+            <form action="{{ url_for('new_conversation') }}" method="POST"><input type="hidden"
+                    name="csrf_token" value="{{ csrf_token() }}"><label class="field-label"
                     for="newChatStudentSearch">Find a student</label><input id="newChatStudentSearch" type="search"
                     data-student-filter="newChatUser" placeholder="Name or department" autocomplete="off"><label
                     class="field-label" for="newChatUser">Student</label><select id="newChatUser" name="user_id"
@@ -271,8 +281,8 @@
             <button class="modal-close" type="button" data-close-modal aria-label="Close">×</button>
             <p class="eyebrow-label">STUDY TOGETHER</p>
             <h2 id="newGroupTitle">Create a group</h2>
-            <form action="{{ url_for('create_group_conversation') }}" method="POST" enctype="multipart/form-data"><label
-                    class="field-label" for="groupTitle">Group name</label><input id="groupTitle" name="title"
+            <form action="{{ url_for('create_group_conversation') }}" method="POST" enctype="multipart/form-data"><input
+                    type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label class="field-label" for="groupTitle">Group name</label><input id="groupTitle" name="title"
                     maxlength="100" placeholder="e.g. DBMS exam prep" required><label class="field-label"
                     for="groupImage">Group image <span>optional</span></label><input id="groupImage" name="group_image"
                     type="file" accept="image/png,image/jpeg,image/gif">
@@ -296,6 +306,7 @@
             <p class="eyebrow-label">GROUP ADMIN</p>
             <h2 id="addMembersTitle">Add students</h2>
             <form action="{{ url_for('add_group_members', conversation_id=selected_conversation.id) }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <fieldset class="member-picker">
                     <legend>Available students</legend>
                     <div class="member-picker-list">{% for student in available_group_members %}<label

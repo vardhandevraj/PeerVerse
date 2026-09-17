@@ -28,6 +28,9 @@
             <a href="{{ url_for('resources') }}">Resources</a>
             <a href="{{ url_for('search') }}">Search</a>
             <a href="{{ url_for('ai_assistant') }}">AI</a>
+            {% if is_admin_user() %}
+                <a href="{{ url_for('admin_reports') }}">Moderation</a>
+            {% endif %}
             <a href="{{ url_for('logout') }}">Sign Out</a>
         </nav>
 
@@ -75,7 +78,18 @@
                 {% endif %}
             {% endwith %}
 
+            {% if needs_verification() %}
+                <div class="verify-banner">
+                    <span>Verify your email to post, comment, and connect with peers.</span>
+                    <form action="{{ url_for('resend_verification') }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="small-action-button" type="submit">Resend Email</button>
+                    </form>
+                </div>
+            {% endif %}
+
             <form class="create-post-form" action="{{ url_for('create_post') }}" method="POST" enctype="multipart/form-data">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <div class="form-row">
                     <label for="content">Create a post</label>
                     <textarea id="content" name="content" rows="3" placeholder="Share lecture notes, ask conceptual questions, or start a discussion..." required></textarea>
@@ -106,11 +120,11 @@
                     {% for post in posts %}
                         <article class="feed-post">
                             <div class="post-author-row">
-                                <div class="avatar">
+                                <a class="avatar presence-avatar {% if is_online(post.user_id) %}is-online{% endif %}" href="{{ url_for('public_profile', user_id=post.user_id) }}" title="View {{ post.full_name }}'s profile">
                                     {{ post.full_name[:1] }}
-                                </div>
+                                </a>
                                 <div>
-                                    <h2>{{ post.full_name }}</h2>
+                                    <h2><a class="student-name-link" href="{{ url_for('public_profile', user_id=post.user_id) }}">{{ post.full_name }}</a></h2>
                                     <p>{{ post.department }} · {{ post.study_year }} · {{ post.created_at }}</p>
                                 </div>
                             </div>
@@ -137,6 +151,7 @@
 
                             <div class="post-controls">
                                 <form action="{{ url_for('like_post', post_id=post.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button class="small-action-button" type="submit">
                                         {% if post.liked_by_user %}
                                             Liked
@@ -150,7 +165,24 @@
                                     <a class="small-link-button" href="{{ url_for('edit_post', post_id=post.id) }}">Edit</a>
 
                                     <form action="{{ url_for('delete_post', post_id=post.id) }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button class="small-action-button light-button" type="submit">Delete</button>
+                                    </form>
+                                {% endif %}
+
+                                {% if post.user_id != user.id %}
+                                    <form action="{{ url_for('report_content') }}" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="target_type" value="post">
+                                        <input type="hidden" name="target_id" value="{{ post.id }}">
+                                        <select class="report-select" name="reason" required>
+                                            <option value="" selected disabled>Report</option>
+                                            <option value="spam">Spam</option>
+                                            <option value="inappropriate">Inappropriate</option>
+                                            <option value="harassment">Harassment</option>
+                                            <option value="other">Other</option>
+                                        </select>
+                                        <button class="small-action-button light-button" type="submit">Submit</button>
                                     </form>
                                 {% endif %}
                             </div>
@@ -165,6 +197,7 @@
 
                                         {% if comment.user_id == user.id %}
                                             <form action="{{ url_for('delete_comment', comment_id=comment.id) }}" method="POST">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <button class="delete-comment-button" type="submit">Remove</button>
                                             </form>
                                         {% endif %}
@@ -172,6 +205,7 @@
                                 {% endfor %}
 
                                 <form class="comment-form" action="{{ url_for('add_comment', post_id=post.id) }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="text" name="comment_text" placeholder="Write a response..." required>
                                     <button type="submit">Reply</button>
                                 </form>
