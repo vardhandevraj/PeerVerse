@@ -1,6 +1,7 @@
 Flask==3.0.3
 Flask-SocketIO==5.3.6
 Authlib
+requests==2.34.2
 groq
 psycopg2-binary
 supabase
