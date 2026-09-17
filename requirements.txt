@@ -1,9 +1,11 @@
 Flask==3.0.3
 Flask-SocketIO==5.3.6
+Authlib
 groq
 psycopg2-binary
 supabase
 python-dotenv
 Werkzeug
-eventlet
-gunicorn==21.2.0
+eventlet>=0.40.1
+gunicorn==23.0.0
+Pillow
